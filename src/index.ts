@@ -6,6 +6,7 @@ import "@/lib/initialize.ts";
 import server from "@/lib/server.ts";
 import routes from "@/api/routes/index.ts";
 import logger from "@/lib/logger.ts";
+import { startTokenHealthcheckJob } from "@/lib/token-healthcheck.ts";
 
 const startupTime = performance.now();
 
@@ -19,6 +20,15 @@ const startupTime = performance.now();
   logger.info("Service name:", config.service.name);
 
   server.attachRoutes(routes);
+
+  // Token 池存活检测：默认每 4 小时跑一次，并在启动时跑一遍
+  startTokenHealthcheckJob({
+    schedule: "0 */4 * * *",
+    runOnStart: true,
+    batchSize: 20,
+    delayMs: 250,
+  });
+
   await server.listen();
 
   config.service.bindAddress &&

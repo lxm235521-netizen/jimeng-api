@@ -133,6 +133,7 @@ onMounted(() => {
             <div class="mono">{{ t.id.slice(0, 8) }}</div>
             <div class="mono" :title="t.token_value">{{ maskToken(t.token_value) }}</div>
             <div>
+              <span class="dot" :class="t.status" title="valid=绿 / invalid=红"></span>
               <span class="tag" :class="t.status">{{ t.status }}</span>
             </div>
             <div class="mono">{{ t.updated_at }}</div>
@@ -261,7 +262,7 @@ onMounted(() => {
 
 .tr {
   display: grid;
-  grid-template-columns: 90px 1fr 90px 220px 220px 90px;
+  grid-template-columns: 90px 1fr 140px 220px 220px 90px;
   gap: 10px;
   padding: 10px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -293,6 +294,25 @@ onMounted(() => {
   border-radius: 999px;
   font-size: 12px;
   border: 1px solid rgba(255, 255, 255, 0.15);
+  margin-left: 8px;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  margin-right: 2px;
+}
+
+.dot.valid {
+  background: rgba(34, 197, 94, 0.95);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
+}
+
+.dot.invalid {
+  background: rgba(239, 68, 68, 0.95);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
 }
 
 .tag.valid {
