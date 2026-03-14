@@ -37,6 +37,10 @@ function goTokens() {
   router.push('/tokens')
 }
 
+function goImageGen() {
+  router.push('/image-gen')
+}
+
 onMounted(() => {
   loadMe()
 })
@@ -50,6 +54,7 @@ onMounted(() => {
         <div class="name">Jimeng Admin</div>
       </div>
       <div class="right">
+        <button class="nav" @click="goImageGen">图片生成</button>
         <button class="nav" @click="goTokens">Token 管理</button>
         <button class="logout" @click="logout">退出登录</button>
       </div>
@@ -65,14 +70,17 @@ onMounted(() => {
         <pre v-else class="mono">{{ JSON.stringify(me, null, 2) }}</pre>
 
         <div class="sp"></div>
-        <div class="p">Token（本地保存）：</div>
+        <div class="p">Admin JWT（本地保存）：</div>
         <div class="mono">{{ token ? token.slice(0, 28) + '…' : '(none)' }}</div>
       </div>
 
       <div class="card">
-        <div class="h">管理功能</div>
-        <div class="p">当前已支持：登录 / 鉴权 / Token 池（轮询抽取）。</div>
-        <button class="btn" @click="goTokens">进入 Token 管理</button>
+        <div class="h">常用入口</div>
+        <div class="p">图片生成控制台：不需要填写 Authorization，后端会自动从 Token 池抽取有效 token。</div>
+        <div class="row">
+          <button class="btn" @click="goImageGen">进入图片生成</button>
+          <button class="btn ghost" @click="goTokens">进入 Token 管理</button>
+        </div>
       </div>
     </main>
   </div>
@@ -197,14 +205,24 @@ pre.mono {
   height: 8px;
 }
 
-.btn {
+.row {
+  display: flex;
+  gap: 10px;
   margin-top: 10px;
+}
+
+.btn {
   border-radius: 12px;
   padding: 10px 12px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.95), rgba(34, 197, 94, 0.9));
   border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.95), rgba(34, 197, 94, 0.9));
   color: #fff;
   font-weight: 700;
   cursor: pointer;
+}
+
+.btn.ghost {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 600;
 }
 </style>

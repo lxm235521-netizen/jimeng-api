@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import LoginView from './views/LoginView.vue'
 import HomeView from './views/HomeView.vue'
 import TokensView from './views/TokensView.vue'
+import ImageGenView from './views/ImageGenView.vue'
 import { getToken, clearToken } from './lib/api'
 
 const router = createRouter({
@@ -11,6 +12,7 @@ const router = createRouter({
     { path: '/login', component: LoginView },
     { path: '/home', component: HomeView },
     { path: '/tokens', component: TokensView },
+    { path: '/image-gen', component: ImageGenView },
   ],
 })
 
