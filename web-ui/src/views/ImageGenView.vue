@@ -1,21 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { apiFetch } from '../lib/api'
+import { IMAGE_MODELS_BY_NODE, type NodeKey } from '../lib/models-map'
 
 type RespFormat = 'url' | 'b64_json'
-
-type NodeKey = 'cn' | 'jp' | 'us' | 'hk' | 'sg'
-
-interface ModelItem {
-  id: string
-  object: string
-  owned_by?: string
-  description?: string
-}
-
-interface ModelsResp {
-  data: ModelItem[]
-}
 
 interface GenResp {
   created: number
@@ -27,7 +15,7 @@ const error = ref('')
 
 const node = ref<NodeKey>('cn')
 
-const models = ref<ModelItem[]>([])
+// 仅用于提示/兼容：仍然拉一次 /v1/models（失败不影响）
 const modelsLoading = ref(false)
 
 const model = ref('jimeng-4.5')
@@ -41,26 +29,33 @@ const response_format = ref<RespFormat>('url')
 const result = ref<GenResp | null>(null)
 
 const ratios = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9']
-const resolutions = ['1k', '2k', '4k']
-
-const modelOptions = computed(() => {
-  const list = models.value
-    .map((m) => m.id)
-    .filter((id) => typeof id === 'string' && id.length > 0)
-  // 去重
-  return Array.from(new Set(list))
+const resolutions = computed(() => {
+  // README 规则：nanobanana 在 US 固定 1024x1024 + 2k（忽略 ratio/resolution）
+  // HK/JP/SG 强制 1k
+  // 这里先做 UI 限制，最终仍以服务端行为为准。
+  if (model.value === 'nanobanana') {
+    if (node.value === 'us') return ['2k']
+    if (node.value === 'hk' || node.value === 'jp' || node.value === 'sg') return ['1k']
+  }
+  return ['1k', '2k', '4k']
 })
 
-async function loadModels() {
+const modelOptions = computed(() => IMAGE_MODELS_BY_NODE[node.value] || [])
+
+async function loadModelsHint() {
   modelsLoading.value = true
   try {
-    const r = await apiFetch<ModelsResp>('/v1/models', { method: 'GET' })
-    models.value = r.data || []
-    // 如果当前 model 不在列表里，就保持不变（避免覆盖用户输入）
-  } catch (e: any) {
-    // 模型列表失败不影响生成（仍可手填）
+    await apiFetch('/v1/models', { method: 'GET' })
+  } catch {
+    // ignore
   } finally {
     modelsLoading.value = false
+  }
+}
+
+function ensureModelInNode() {
+  if (!modelOptions.value.includes(model.value)) {
+    model.value = modelOptions.value[0] || 'jimeng-4.5'
   }
 }
 
@@ -74,7 +69,7 @@ async function generate() {
 
   loading.value = true
   try {
-    // 注意：不带 Authorization，让后端自动从 Token 池抽取
+    // 不带 Authorization，让后端自动从 Token 池抽取
     // 通过 X-Token-Node 指定节点（cn/jp/us/hk/sg）
     const body: any = {
       model: model.value,
@@ -95,6 +90,7 @@ async function generate() {
     })
     result.value = r
   } catch (e: any) {
+    // 你遇到的：[登录失效]: check login error
     error.value = e?.message || '生成失败'
   } finally {
     loading.value = false
@@ -107,12 +103,18 @@ function b64ToDataUrl(b64: string) {
 }
 
 onMounted(() => {
-  loadModels()
+  loadModelsHint()
+  ensureModelInNode()
+})
+
+watch(node, () => {
+  // 节点变更后强制把模型限定在该节点支持列表
+  ensureModelInNode()
 })
 </script>
 
 <template>
-  <div class="wrap">
+  <div class="page">
     <div class="topbar">
       <div>
         <div class="title">图片生成控制台</div>
@@ -137,17 +139,16 @@ onMounted(() => {
 
         <div class="form">
           <label class="field">
-            <span>模型</span>
+            <span>模型（与节点联动）</span>
             <div class="row2">
-              <select v-if="modelOptions.length" v-model="model" :disabled="modelsLoading">
+              <select v-model="model" :disabled="modelsLoading">
                 <option v-for="id in modelOptions" :key="id" :value="id">{{ id }}</option>
               </select>
-              <input v-else v-model="model" placeholder="jimeng-4.5" />
-              <button class="btn ghost" type="button" @click="loadModels" :disabled="modelsLoading">
-                {{ modelsLoading ? '加载中…' : '刷新模型' }}
+              <button class="btn ghost" type="button" @click="loadModelsHint" :disabled="modelsLoading">
+                {{ modelsLoading ? '…' : '刷新' }}
               </button>
             </div>
-            <div class="hint">模型列表来自 GET /v1/models；如未覆盖到你想用的模型，可直接手填。</div>
+            <div class="hint">模型范围来自 README.CN.md 的节点/模型关系；后端仍会做最终校验。</div>
           </label>
 
           <label class="field">
@@ -199,7 +200,7 @@ onMounted(() => {
 
       <div class="card">
         <div class="h">结果</div>
-        <div v-if="!result" class="hint">提交后在这里展示结果（url 或 base64）。</div>
+        <div v-if="!result" class="p">提交后在这里展示结果（url 或 base64）。</div>
 
         <div v-else class="result">
           <div class="mono">created: {{ result.created }}</div>
@@ -229,16 +230,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.wrap {
-  min-height: 100vh;
-  background: #0b1020;
-  color: rgba(255, 255, 255, 0.9);
-  padding: 22px;
+.page {
+  display: grid;
+  gap: 14px;
 }
 
 .topbar {
-  max-width: 1200px;
-  margin: 0 auto 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -246,7 +243,7 @@ onMounted(() => {
 }
 
 .title {
-  font-weight: 800;
+  font-weight: 900;
 }
 
 .meta {
@@ -267,8 +264,6 @@ onMounted(() => {
 }
 
 .grid {
-  max-width: 1200px;
-  margin: 0 auto;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
@@ -278,18 +273,6 @@ onMounted(() => {
   .grid {
     grid-template-columns: 1fr;
   }
-}
-
-.card {
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  padding: 16px;
-}
-
-.h {
-  font-weight: 800;
-  margin-bottom: 10px;
 }
 
 .form {
@@ -307,24 +290,9 @@ onMounted(() => {
   font-size: 13px;
 }
 
-input,
-select {
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.92);
-  outline: none;
-}
-
 .ta {
   min-height: 96px;
   padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.92);
-  outline: none;
   resize: vertical;
 }
 
@@ -351,35 +319,6 @@ select {
   gap: 10px;
   align-items: center;
   color: rgba(255, 255, 255, 0.7);
-  font-size: 13px;
-}
-
-.btn {
-  border-radius: 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.95), rgba(34, 197, 94, 0.9));
-  color: #fff;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.btn.ghost {
-  background: rgba(255, 255, 255, 0.06);
-  font-weight: 600;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.error {
-  color: #fecaca;
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.28);
-  padding: 10px 12px;
-  border-radius: 12px;
   font-size: 13px;
 }
 
@@ -410,18 +349,5 @@ select {
 
 .raw {
   margin-top: 8px;
-}
-
-pre.mono,
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.75);
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-
-a {
-  color: rgba(147, 197, 253, 0.95);
 }
 </style>

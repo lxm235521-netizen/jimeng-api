@@ -2,10 +2,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { apiFetch } from '../lib/api'
 
+type NodeKey = 'cn' | 'jp' | 'us' | 'hk' | 'sg'
+
 interface TokenRecord {
   id: string
   token_value: string
   status: 'valid' | 'invalid'
+  node?: NodeKey
   created_at: string
   updated_at: string
 }
@@ -25,19 +28,40 @@ const adding = ref(false)
 const checking = ref(false)
 const checkResult = ref<string>('')
 
+const importNode = ref<NodeKey>('cn')
+const filterNode = ref<NodeKey | 'all'>('all')
+
 const validCount = computed(() => tokens.value.filter((t) => t.status === 'valid').length)
 
 function maskToken(v: string) {
   if (!v) return ''
+  // 不显示完整 token，避免泄露（仍可复制/导出时再做）
   if (v.length <= 18) return v
   return `${v.slice(0, 10)}…${v.slice(-6)}`
+}
+
+function prefixForNode(n: NodeKey) {
+  if (n === 'cn') return ''
+  return `${n}-`
+}
+
+function normalizeInputLine(line: string, node: NodeKey) {
+  let s = (line || '').trim()
+  if (!s) return ''
+  if (/^bearer\s+/i.test(s)) s = s.replace(/^bearer\s+/i, '').trim()
+
+  // 如果用户已经写了 us-/jp-/hk-/sg-，就不再重复加
+  if (/^(us|jp|hk|sg)-/i.test(s) || node === 'cn') return s
+
+  return `${prefixForNode(node)}${s}`
 }
 
 async function loadList() {
   loading.value = true
   error.value = ''
   try {
-    const data = await apiFetch<{ tokens: TokenRecord[] }>('/api/admin/tokens', { method: 'GET' })
+    const qs = filterNode.value === 'all' ? '' : `?node=${filterNode.value}`
+    const data = await apiFetch<{ tokens: TokenRecord[] }>(`/api/admin/tokens${qs}`, { method: 'GET' })
     tokens.value = data.tokens || []
   } catch (e: any) {
     error.value = e?.message || '加载失败'
@@ -67,11 +91,17 @@ async function doImport() {
   error.value = ''
   importResult.value = ''
   try {
+    const lines = (importText.value || '').split(/\r?\n/)
+    const normalized = lines
+      .map((l) => normalizeInputLine(l, importNode.value))
+      .filter((l) => l.length > 0)
+      .join('\n')
+
     const r = await apiFetch<{ inserted: number; skipped: number; totalLines: number; totalTokens: number }>(
       '/api/admin/tokens/import',
       {
         method: 'POST',
-        body: JSON.stringify({ text: importText.value }),
+        body: JSON.stringify({ text: normalized }),
       },
     )
     importResult.value = `导入完成：插入 ${r.inserted}，跳过 ${r.skipped}（行数 ${r.totalLines} / token数 ${r.totalTokens}）`
@@ -89,10 +119,11 @@ async function runCheck() {
   error.value = ''
   checkResult.value = ''
   try {
-    const r = await apiFetch<{ total: number; checked: number; invalidated: number }>('/api/admin/tokens/healthcheck', {
-      method: 'POST',
-    })
-    checkResult.value = `检测完成：检查 ${r.checked}/${r.total}，失效标记 ${r.invalidated}`
+    const r = await apiFetch<{ total: number; checked: number; invalidated: number; unknown?: number }>(
+      '/api/admin/tokens/healthcheck',
+      { method: 'POST' },
+    )
+    checkResult.value = `检测完成：检查 ${r.checked}/${r.total}，失效标记 ${r.invalidated}${typeof r.unknown === 'number' ? `，未知 ${r.unknown}` : ''}`
     await loadList()
   } catch (e: any) {
     error.value = e?.message || '检测失败'
@@ -118,11 +149,27 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="wrap">
+  <div class="page">
     <div class="topbar">
-      <div class="title">Token 池管理</div>
-      <div class="meta">共 {{ tokens.length }} 个 / 有效 {{ validCount }} 个</div>
+      <div>
+        <div class="title">Token 池管理</div>
+        <div class="meta">共 {{ tokens.length }} 个 / 有效 {{ validCount }} 个</div>
+      </div>
+
       <div class="sp"></div>
+
+      <div class="filters">
+        <span class="lbl">筛选节点</span>
+        <select v-model="filterNode" @change="loadList">
+          <option value="all">全部</option>
+          <option value="cn">国内（CN）</option>
+          <option value="jp">日本（JP）</option>
+          <option value="us">美国（US）</option>
+          <option value="hk">香港（HK）</option>
+          <option value="sg">新加坡（SG）</option>
+        </select>
+      </div>
+
       <button class="btn ghost" @click="runCheck" :disabled="checking">
         {{ checking ? '检测中…' : '立即检测' }}
       </button>
@@ -132,7 +179,7 @@ onMounted(() => {
 
     <div class="card">
       <div class="row">
-        <input class="input" v-model="addOneText" placeholder="新增单个 token（可包含 us-/hk- 前缀的完整 sessionid）" />
+        <input class="input" v-model="addOneText" placeholder="新增单个 token（可包含 us-/jp-/hk-/sg- 前缀的完整 sessionid）" />
         <button class="btn" @click="addOne" :disabled="adding || !addOneText.trim()">{{ adding ? '提交中…' : '新增' }}</button>
       </div>
 
@@ -142,6 +189,7 @@ onMounted(() => {
       <div class="table">
         <div class="tr th">
           <div>ID</div>
+          <div>Node</div>
           <div>Token</div>
           <div>Status</div>
           <div>Updated</div>
@@ -155,6 +203,7 @@ onMounted(() => {
         <div v-else class="tbody">
           <div v-for="t in tokens" :key="t.id" class="tr">
             <div class="mono">{{ t.id.slice(0, 8) }}</div>
+            <div class="mono">{{ t.node || '-' }}</div>
             <div class="mono" :title="t.token_value">{{ maskToken(t.token_value) }}</div>
             <div>
               <span class="dot" :class="t.status" title="valid=绿 / invalid=红"></span>
@@ -173,9 +222,21 @@ onMounted(() => {
     <div v-if="showImport" class="modal">
       <div class="dialog">
         <div class="h">批量导入</div>
-        <div class="p">按换行分割；会自动过滤空行；支持一行多个 token（用英文逗号分隔）。</div>
+        <div class="p">选择节点后，会自动给每行 token 补前缀（cn 不加；jp/us/hk/sg 会加）。若你已手写了前缀，则不会重复添加。</div>
+
+        <div class="row" style="margin: 10px 0 6px;">
+          <span class="lbl">节点</span>
+          <select v-model="importNode">
+            <option value="cn">国内（CN）</option>
+            <option value="jp">日本（JP）</option>
+            <option value="us">美国（US）</option>
+            <option value="hk">香港（HK）</option>
+            <option value="sg">新加坡（SG）</option>
+          </select>
+        </div>
+
         <textarea class="ta" v-model="importText" placeholder="在这里粘贴多个 token，每行一个…"></textarea>
-        <div v-if="importResult" class="ok">{{ importResult }}</div>
+        <div v-if="importResult" class="ok" style="margin-top:10px;">{{ importResult }}</div>
         <div class="actions">
           <button class="btn ghost" @click="showImport = false">取消</button>
           <button class="btn" @click="doImport" :disabled="importing || !importText.trim()">
@@ -188,103 +249,51 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.wrap {
-  min-height: 100vh;
-  background: #0b1020;
-  color: rgba(255, 255, 255, 0.9);
-  padding: 22px;
+.page {
+  display: grid;
+  gap: 14px;
 }
 
 .topbar {
-  max-width: 1200px;
-  margin: 0 auto 14px;
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
 .title {
-  font-weight: 800;
+  font-weight: 900;
 }
 
 .meta {
   color: rgba(255, 255, 255, 0.55);
   font-size: 13px;
+  margin-top: 2px;
 }
 
 .sp {
   flex: 1;
 }
 
-.card {
-  max-width: 1200px;
-  margin: 0 auto;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  padding: 16px;
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lbl {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
 }
 
 .row {
   display: flex;
   gap: 10px;
   align-items: center;
-  margin-bottom: 12px;
 }
 
 .input {
   flex: 1;
   padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.92);
-  outline: none;
-}
-
-.btn {
-  border-radius: 12px;
-  padding: 9px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.95), rgba(34, 197, 94, 0.9));
-  color: #fff;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.btn.ghost {
-  background: rgba(255, 255, 255, 0.06);
-  font-weight: 600;
-}
-
-.btn.danger {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: rgba(239, 68, 68, 0.35);
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.error {
-  color: #fecaca;
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.28);
-  padding: 10px 12px;
-  border-radius: 12px;
-  font-size: 13px;
-  margin-bottom: 10px;
-}
-
-.ok {
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(34, 197, 94, 0.12);
-  border: 1px solid rgba(34, 197, 94, 0.22);
-  color: rgba(187, 247, 208, 0.95);
-  font-size: 13px;
 }
 
 .table {
@@ -296,7 +305,7 @@ onMounted(() => {
 
 .tr {
   display: grid;
-  grid-template-columns: 90px 1fr 140px 220px 220px 90px;
+  grid-template-columns: 90px 60px 1fr 140px 220px 220px 90px;
   gap: 10px;
   padding: 10px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -306,15 +315,8 @@ onMounted(() => {
 .th {
   border-top: none;
   background: rgba(0, 0, 0, 0.22);
-  font-weight: 700;
+  font-weight: 800;
   color: rgba(255, 255, 255, 0.7);
-}
-
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.75);
-  word-break: break-all;
 }
 
 .ops {
@@ -377,33 +379,18 @@ onMounted(() => {
 
 .dialog {
   width: 100%;
-  max-width: 720px;
+  max-width: 760px;
   border-radius: 16px;
   background: #0f1730;
   border: 1px solid rgba(255, 255, 255, 0.12);
   padding: 16px;
 }
 
-.h {
-  font-weight: 800;
-  margin-bottom: 6px;
-}
-
-.p {
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 13px;
-  margin-bottom: 10px;
-}
-
 .ta {
   width: 100%;
   min-height: 240px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.92);
   padding: 10px 12px;
-  outline: none;
+  border-radius: 12px;
   resize: vertical;
 }
 

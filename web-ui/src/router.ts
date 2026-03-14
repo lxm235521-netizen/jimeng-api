@@ -3,16 +3,24 @@ import LoginView from './views/LoginView.vue'
 import HomeView from './views/HomeView.vue'
 import TokensView from './views/TokensView.vue'
 import ImageGenView from './views/ImageGenView.vue'
+import AdminLayout from './layouts/AdminLayout.vue'
 import { getToken, clearToken } from './lib/api'
 
 const router = createRouter({
   history: createWebHistory('/admin/'),
   routes: [
-    { path: '/', redirect: '/login' },
     { path: '/login', component: LoginView },
-    { path: '/home', component: HomeView },
-    { path: '/tokens', component: TokensView },
-    { path: '/image-gen', component: ImageGenView },
+    {
+      path: '/',
+      component: AdminLayout,
+      children: [
+        { path: '', redirect: '/home' },
+        { path: 'home', component: HomeView },
+        { path: 'image-gen', component: ImageGenView },
+        { path: 'tokens', component: TokensView },
+      ],
+    },
+    { path: '/:pathMatch(.*)*', redirect: '/home' },
   ],
 })
 
