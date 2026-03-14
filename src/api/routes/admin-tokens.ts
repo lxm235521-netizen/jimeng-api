@@ -6,6 +6,7 @@ import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
 
 import { addToken, deleteToken, importTokens, listTokens } from '@/lib/token-store.ts';
+import { runTokenHealthcheckOnce } from '@/lib/token-healthcheck.ts';
 
 export default {
   prefix: '/api/admin/tokens',
@@ -30,6 +31,14 @@ export default {
       request.validate('body.text', _.isString);
       const text = String(request.body.text || '');
       const result = await importTokens(text);
+      return new SuccessfulBody(result);
+    },
+
+    '/healthcheck': async (_request: Request) => {
+      const result = await runTokenHealthcheckOnce({
+        batchSize: 20,
+        delayMs: 250,
+      });
       return new SuccessfulBody(result);
     },
   },

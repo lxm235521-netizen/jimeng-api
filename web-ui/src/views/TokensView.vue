@@ -22,6 +22,9 @@ const importResult = ref<string>('')
 const addOneText = ref('')
 const adding = ref(false)
 
+const checking = ref(false)
+const checkResult = ref<string>('')
+
 const validCount = computed(() => tokens.value.filter((t) => t.status === 'valid').length)
 
 function maskToken(v: string) {
@@ -81,6 +84,23 @@ async function doImport() {
   }
 }
 
+async function runCheck() {
+  checking.value = true
+  error.value = ''
+  checkResult.value = ''
+  try {
+    const r = await apiFetch<{ total: number; checked: number; invalidated: number }>('/api/admin/tokens/healthcheck', {
+      method: 'POST',
+    })
+    checkResult.value = `检测完成：检查 ${r.checked}/${r.total}，失效标记 ${r.invalidated}`
+    await loadList()
+  } catch (e: any) {
+    error.value = e?.message || '检测失败'
+  } finally {
+    checking.value = false
+  }
+}
+
 async function del(id: string) {
   if (!confirm('确定删除该 Token？')) return
   error.value = ''
@@ -103,6 +123,9 @@ onMounted(() => {
       <div class="title">Token 池管理</div>
       <div class="meta">共 {{ tokens.length }} 个 / 有效 {{ validCount }} 个</div>
       <div class="sp"></div>
+      <button class="btn ghost" @click="runCheck" :disabled="checking">
+        {{ checking ? '检测中…' : '立即检测' }}
+      </button>
       <button class="btn" @click="showImport = true">批量导入</button>
       <button class="btn ghost" @click="loadList" :disabled="loading">刷新</button>
     </div>
@@ -113,6 +136,7 @@ onMounted(() => {
         <button class="btn" @click="addOne" :disabled="adding || !addOneText.trim()">{{ adding ? '提交中…' : '新增' }}</button>
       </div>
 
+      <div v-if="checkResult" class="ok">{{ checkResult }}</div>
       <div v-if="error" class="error">{{ error }}</div>
 
       <div class="table">
@@ -253,6 +277,16 @@ onMounted(() => {
   margin-bottom: 10px;
 }
 
+.ok {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  color: rgba(187, 247, 208, 0.95);
+  font-size: 13px;
+}
+
 .table {
   margin-top: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -378,15 +412,5 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 12px;
-}
-
-.ok {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(34, 197, 94, 0.12);
-  border: 1px solid rgba(34, 197, 94, 0.22);
-  color: rgba(187, 247, 208, 0.95);
-  font-size: 13px;
 }
 </style>
