@@ -11,6 +11,14 @@ export interface LoginData {
   exp?: number
 }
 
+export interface AdminTokenRecord {
+  id: string
+  token_value: string
+  status: 'valid' | 'invalid'
+  updated_at: string
+  created_at: string
+}
+
 async function parseApiError(resp: Response): Promise<string> {
   let msg = `请求失败 (${resp.status})`
   try {
@@ -54,6 +62,30 @@ export async function adminLogin(username: string, password: string): Promise<Lo
 
 export async function adminMe(): Promise<any> {
   return await apiFetch('/api/admin/me', { method: 'GET' })
+}
+
+export async function adminTokenList(): Promise<{ tokens: AdminTokenRecord[] }> {
+  return await apiFetch('/api/admin/tokens', { method: 'GET' })
+}
+
+export async function adminTokenCreate(token_value: string): Promise<{ token: AdminTokenRecord }> {
+  return await apiFetch('/api/admin/tokens', {
+    method: 'POST',
+    body: JSON.stringify({ token_value }),
+  })
+}
+
+export async function adminTokenImport(text: string): Promise<{ inserted: number; skipped: number; total: number }> {
+  return await apiFetch('/api/admin/tokens/import', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  })
+}
+
+export async function adminTokenDelete(id: string): Promise<{ ok: boolean }> {
+  return await apiFetch(`/api/admin/tokens/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
 }
 
 export function getToken(): string | null {

@@ -6,6 +6,7 @@ import models from './models.ts';
 import videos from './videos.ts';
 import admin from './admin.ts';
 import adminMe from './admin-me.ts';
+import adminTokens from './admin-tokens.ts';
 
 export default [
     {
@@ -23,7 +24,8 @@ export default [
                         videos: '/v1/videos/generations',
                         models: '/v1/models',
                         health: '/ping',
-                        admin_login: '/api/admin/login'
+                        admin_login: '/api/admin/login',
+                        admin_tokens: '/api/admin/tokens'
                     }
                 };
             }
@@ -35,5 +37,6 @@ export default [
     models,
     videos,
     admin,
-    adminMe
+    adminMe,
+    adminTokens
 ];

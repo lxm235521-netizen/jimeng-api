@@ -2,9 +2,9 @@ import _ from 'lodash';
 
 import Request from '@/lib/request/Request.ts';
 import Response from '@/lib/response/Response.ts';
-import { tokenSplit } from '@/api/controllers/core.ts';
 import { generateVideo, DEFAULT_MODEL } from '@/api/controllers/videos.ts';
 import util from '@/lib/util.ts';
+import { resolveRequestToken, withPoolTokenRetry } from '@/lib/token-provider.ts';
 
 export default {
 
@@ -22,8 +22,7 @@ export default {
                 .validate('body.ratio', v => _.isUndefined(v) || _.isString(v))
                 .validate('body.resolution', v => _.isUndefined(v) || _.isString(v))
                 .validate('body.functionMode', v => _.isUndefined(v) || (_.isString(v) && ['first_last_frames', 'omni_reference'].includes(v)))
-                .validate('body.response_format', v => _.isUndefined(v) || _.isString(v))
-                .validate('headers.authorization', _.isString);
+                .validate('body.response_format', v => _.isUndefined(v) || _.isString(v));
 
             const functionMode = request.body.functionMode || 'first_last_frames';
             const isOmniMode = functionMode === 'omni_reference';
@@ -136,11 +135,6 @@ export default {
                 }
             }
 
-            // refresh_token切分
-            const tokens = tokenSplit(request.headers.authorization);
-            // 随机挑选一个refresh_token
-            const token = _.sample(tokens);
-
             const {
                 model = DEFAULT_MODEL,
                 prompt,
@@ -160,35 +154,35 @@ export default {
             // 兼容两种参数名格式：file_paths 和 filePaths
             const finalFilePaths = filePaths.length > 0 ? filePaths : file_paths;
 
-            // 生成视频
-            const generatedVideoUrl = await generateVideo(
-                model,
-                prompt,
-                {
-                    ratio,
-                    resolution,
-                    duration: finalDuration,
-                    filePaths: finalFilePaths,
-                    files: request.files, // 传递上传的文件
-                    httpRequest: request, // 传递完整的 request 对象以访问动态字段
-                    functionMode,
-                },
-                token
-            );
+            const picked = await resolveRequestToken(request.headers.authorization, 'roundrobin');
 
-            // 根据response_format返回不同格式的结果
-            if (response_format === "b64_json") {
-                // 获取视频内容并转换为BASE64
-                const videoBase64 = await util.fetchFileBASE64(generatedVideoUrl);
-                return {
-                    created: util.unixTimestamp(),
-                    data: [{
-                        b64_json: videoBase64,
-                        revised_prompt: prompt
-                    }]
-                };
-            } else {
-                // 默认返回URL
+            const run = async (token: string) => {
+                const generatedVideoUrl = await generateVideo(
+                    model,
+                    prompt,
+                    {
+                        ratio,
+                        resolution,
+                        duration: finalDuration,
+                        filePaths: finalFilePaths,
+                        files: request.files, // 传递上传的文件
+                        httpRequest: request, // 传递完整的 request 对象以访问动态字段
+                        functionMode,
+                    },
+                    token
+                );
+
+                if (response_format === "b64_json") {
+                    const videoBase64 = await util.fetchFileBASE64(generatedVideoUrl);
+                    return {
+                        created: util.unixTimestamp(),
+                        data: [{
+                            b64_json: videoBase64,
+                            revised_prompt: prompt
+                        }]
+                    };
+                }
+
                 return {
                     created: util.unixTimestamp(),
                     data: [{
@@ -196,7 +190,12 @@ export default {
                         revised_prompt: prompt
                     }]
                 };
+            };
+
+            if (picked.source === 'pool') {
+                return await withPoolTokenRetry(run, { maxAttempts: 3, strategy: 'roundrobin' });
             }
+            return await run(picked.token);
         }
 
     }

@@ -33,6 +33,10 @@ async function loadMe() {
   }
 }
 
+function goTokens() {
+  router.push('/tokens')
+}
+
 onMounted(() => {
   loadMe()
 })
@@ -45,7 +49,10 @@ onMounted(() => {
         <div class="badge">J</div>
         <div class="name">Jimeng Admin</div>
       </div>
-      <button class="logout" @click="logout">退出登录</button>
+      <div class="right">
+        <button class="nav" @click="goTokens">Token 管理</button>
+        <button class="logout" @click="logout">退出登录</button>
+      </div>
     </header>
 
     <main class="main">
@@ -63,8 +70,9 @@ onMounted(() => {
       </div>
 
       <div class="card">
-        <div class="h">下一步</div>
-        <div class="p">你告诉我要加哪些管理功能：例如 Token 列表/积分检查、日志查看、配置编辑、任务历史等。</div>
+        <div class="h">管理功能</div>
+        <div class="p">当前已支持：登录 / 鉴权 / Token 池（轮询抽取）。</div>
+        <button class="btn" @click="goTokens">进入 Token 管理</button>
       </div>
     </main>
   </div>
@@ -95,6 +103,12 @@ onMounted(() => {
   gap: 10px;
 }
 
+.right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .badge {
   width: 32px;
   height: 32px;
@@ -107,6 +121,15 @@ onMounted(() => {
 
 .name {
   font-weight: 700;
+}
+
+.nav {
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.86);
+  cursor: pointer;
 }
 
 .logout {
@@ -172,5 +195,16 @@ pre.mono {
 
 .sp {
   height: 8px;
+}
+
+.btn {
+  margin-top: 10px;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.95), rgba(34, 197, 94, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
 }
 </style>

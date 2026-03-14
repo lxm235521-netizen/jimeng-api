@@ -4,8 +4,8 @@ import _ from "lodash";
 import Request from "@/lib/request/Request.ts";
 import { generateImages, generateImageComposition } from "@/api/controllers/images.ts";
 import { DEFAULT_IMAGE_MODEL } from "@/api/consts/common.ts";
-import { tokenSplit } from "@/api/controllers/core.ts";
 import util from "@/lib/util.ts";
+import { resolveRequestToken, withPoolTokenRetry } from "@/lib/token-provider.ts";
 
 export default {
   prefix: "/v1/images",
@@ -28,11 +28,8 @@ export default {
         .validate("body.resolution", v => _.isUndefined(v) || _.isString(v))
         .validate("body.intelligent_ratio", v => _.isUndefined(v) || _.isBoolean(v))
         .validate("body.sample_strength", v => _.isUndefined(v) || _.isFinite(v))
-        .validate("body.response_format", v => _.isUndefined(v) || _.isString(v))
-        .validate("headers.authorization", _.isString);
+        .validate("body.response_format", v => _.isUndefined(v) || _.isString(v));
 
-      const tokens = tokenSplit(request.headers.authorization);
-      const token = _.sample(tokens);
       const {
         model,
         prompt,
@@ -44,31 +41,40 @@ export default {
         response_format,
       } = request.body;
       const finalModel = _.defaultTo(model, DEFAULT_IMAGE_MODEL);
-
       const responseFormat = _.defaultTo(response_format, "url");
-      const imageUrls = await generateImages(finalModel, prompt, {
-        ratio,
-        resolution,
-        sampleStrength,
-        negativePrompt,
-        intelligentRatio,
-      }, token);
-      let data = [];
-      if (responseFormat == "b64_json") {
-        data = (
-          await Promise.all(imageUrls.map((url) => util.fetchFileBASE64(url)))
-        ).map((b64) => ({ b64_json: b64 }));
-      } else {
-        data = imageUrls.map((url) => ({
-          url,
-        }));
-      }
-      return {
-        created: util.unixTimestamp(),
-        data,
+
+      const picked = await resolveRequestToken(request.headers.authorization, 'roundrobin');
+
+      const run = async (token: string) => {
+        const imageUrls = await generateImages(finalModel, prompt, {
+          ratio,
+          resolution,
+          sampleStrength,
+          negativePrompt,
+          intelligentRatio,
+        }, token);
+
+        let data: any[] = [];
+        if (responseFormat == "b64_json") {
+          data = (
+            await Promise.all(imageUrls.map((url) => util.fetchFileBASE64(url)))
+          ).map((b64) => ({ b64_json: b64 }));
+        } else {
+          data = imageUrls.map((url) => ({ url }));
+        }
+
+        return {
+          created: util.unixTimestamp(),
+          data,
+        };
       };
+
+      if (picked.source === 'pool') {
+        return await withPoolTokenRetry(run, { maxAttempts: 3, strategy: 'roundrobin' });
+      }
+      return await run(picked.token);
     },
-    
+
     "/compositions": async (request: Request) => {
       const unsupportedParams = ['size', 'width', 'height'];
       const bodyKeys = Object.keys(request.body);
@@ -90,8 +96,7 @@ export default {
           .validate("body.resolution", v => _.isUndefined(v) || _.isString(v))
           .validate("body.intelligent_ratio", v => _.isUndefined(v) || (typeof v === 'string' && (v === 'true' || v === 'false')) || _.isBoolean(v))
           .validate("body.sample_strength", v => _.isUndefined(v) || (typeof v === 'string' && !isNaN(parseFloat(v))) || _.isFinite(v))
-          .validate("body.response_format", v => _.isUndefined(v) || _.isString(v))
-          .validate("headers.authorization", _.isString);
+          .validate("body.response_format", v => _.isUndefined(v) || _.isString(v));
       } else {
         request
           .validate("body.model", v => _.isUndefined(v) || _.isString(v))
@@ -102,8 +107,7 @@ export default {
           .validate("body.resolution", v => _.isUndefined(v) || _.isString(v))
           .validate("body.intelligent_ratio", v => _.isUndefined(v) || _.isBoolean(v))
           .validate("body.sample_strength", v => _.isUndefined(v) || _.isFinite(v))
-          .validate("body.response_format", v => _.isUndefined(v) || _.isString(v))
-          .validate("headers.authorization", _.isString);
+          .validate("body.response_format", v => _.isUndefined(v) || _.isString(v));
       }
 
       let images: (string | Buffer)[] = [];
@@ -139,9 +143,6 @@ export default {
         images = bodyImages.map((image: any) => _.isString(image) ? image : image.url);
       }
 
-      const tokens = tokenSplit(request.headers.authorization);
-      const token = _.sample(tokens);
-
       const {
         model,
         prompt,
@@ -164,31 +165,39 @@ export default {
         : intelligentRatio;
 
       const responseFormat = _.defaultTo(response_format, "url");
-      const resultUrls = await generateImageComposition(finalModel, prompt, images, {
-        ratio,
-        resolution,
-        sampleStrength: finalSampleStrength,
-        negativePrompt,
-        intelligentRatio: finalIntelligentRatio,
-      }, token);
 
-      let data = [];
-      if (responseFormat == "b64_json") {
-        data = (
-          await Promise.all(resultUrls.map((url) => util.fetchFileBASE64(url)))
-        ).map((b64) => ({ b64_json: b64 }));
-      } else {
-        data = resultUrls.map((url) => ({
-          url,
-        }));
-      }
+      const picked = await resolveRequestToken(request.headers.authorization, 'roundrobin');
 
-      return {
-        created: util.unixTimestamp(),
-        data,
-        input_images: images.length,
-        composition_type: "multi_image_synthesis",
+      const run = async (token: string) => {
+        const resultUrls = await generateImageComposition(finalModel, prompt, images, {
+          ratio,
+          resolution,
+          sampleStrength: finalSampleStrength,
+          negativePrompt,
+          intelligentRatio: finalIntelligentRatio,
+        }, token);
+
+        let data: any[] = [];
+        if (responseFormat == "b64_json") {
+          data = (
+            await Promise.all(resultUrls.map((url) => util.fetchFileBASE64(url)))
+          ).map((b64) => ({ b64_json: b64 }));
+        } else {
+          data = resultUrls.map((url) => ({ url }));
+        }
+
+        return {
+          created: util.unixTimestamp(),
+          data,
+          input_images: images.length,
+          composition_type: "multi_image_synthesis",
+        };
       };
+
+      if (picked.source === 'pool') {
+        return await withPoolTokenRetry(run, { maxAttempts: 3, strategy: 'roundrobin' });
+      }
+      return await run(picked.token);
     },
   },
 };
