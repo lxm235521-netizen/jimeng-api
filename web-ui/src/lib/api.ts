@@ -11,14 +11,6 @@ export interface LoginData {
   exp?: number
 }
 
-export interface AdminTokenRecord {
-  id: string
-  token_value: string
-  status: 'valid' | 'invalid'
-  updated_at: string
-  created_at: string
-}
-
 async function parseApiError(resp: Response): Promise<string> {
   let msg = `请求失败 (${resp.status})`
   try {
@@ -30,11 +22,32 @@ async function parseApiError(resp: Response): Promise<string> {
   return msg
 }
 
+export function getToken(): string | null {
+  return localStorage.getItem('admin_token')
+}
+
+export function setToken(token: string) {
+  localStorage.setItem('admin_token', token)
+}
+
+export function clearToken() {
+  localStorage.removeItem('admin_token')
+}
+
+/**
+ * 默认 fetch：给“后台管理 API（/api/admin/*）”自动附加 admin JWT。
+ * 生成类接口（/v1/*）绝不能附加 admin JWT，否则会被后端当作即梦 token 使用。
+ */
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken()
   const headers = new Headers(init.headers || {})
+
   if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json')
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  // 只对 /api/admin 前缀自动加 Authorization
+  if (token && path.startsWith('/api/admin')) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
 
   const resp = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -49,6 +62,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   if (typeof body?.code === 'number' && body.code !== 0) {
     throw new Error(body?.message || '请求失败')
   }
+
   // 兼容极端情况下后端直接返回裸对象
   return (body && 'data' in body ? (body.data as T) : (body as any as T))
 }
@@ -62,40 +76,4 @@ export async function adminLogin(username: string, password: string): Promise<Lo
 
 export async function adminMe(): Promise<any> {
   return await apiFetch('/api/admin/me', { method: 'GET' })
-}
-
-export async function adminTokenList(): Promise<{ tokens: AdminTokenRecord[] }> {
-  return await apiFetch('/api/admin/tokens', { method: 'GET' })
-}
-
-export async function adminTokenCreate(token_value: string): Promise<{ token: AdminTokenRecord }> {
-  return await apiFetch('/api/admin/tokens', {
-    method: 'POST',
-    body: JSON.stringify({ token_value }),
-  })
-}
-
-export async function adminTokenImport(text: string): Promise<{ inserted: number; skipped: number; total: number }> {
-  return await apiFetch('/api/admin/tokens/import', {
-    method: 'POST',
-    body: JSON.stringify({ text }),
-  })
-}
-
-export async function adminTokenDelete(id: string): Promise<{ ok: boolean }> {
-  return await apiFetch(`/api/admin/tokens/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  })
-}
-
-export function getToken(): string | null {
-  return localStorage.getItem('admin_token')
-}
-
-export function setToken(token: string) {
-  localStorage.setItem('admin_token', token)
-}
-
-export function clearToken() {
-  localStorage.removeItem('admin_token')
 }
