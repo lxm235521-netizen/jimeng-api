@@ -4,7 +4,10 @@ import Request from '@/lib/request/Request.ts';
 import Response from '@/lib/response/Response.ts';
 import { generateVideo, DEFAULT_MODEL } from '@/api/controllers/videos.ts';
 import util from '@/lib/util.ts';
-import { resolveRequestToken, withPoolTokenRetry } from '@/lib/token-provider.ts';
+
+import { resolveTokenFromRequest, markTokenInvalid } from '@/lib/token-picker.ts';
+import APIException from '@/lib/exceptions/APIException.ts';
+import EX from '@/api/consts/exceptions.ts';
 
 export default {
 
@@ -135,6 +138,8 @@ export default {
                 }
             }
 
+            const { token, source } = await resolveTokenFromRequest(request.headers);
+
             const {
                 model = DEFAULT_MODEL,
                 prompt,
@@ -154,10 +159,10 @@ export default {
             // 兼容两种参数名格式：file_paths 和 filePaths
             const finalFilePaths = filePaths.length > 0 ? filePaths : file_paths;
 
-            const picked = await resolveRequestToken(request.headers.authorization, 'roundrobin');
-
-            const run = async (token: string) => {
-                const generatedVideoUrl = await generateVideo(
+            // 生成视频
+            let generatedVideoUrl: string;
+            try {
+                generatedVideoUrl = await generateVideo(
                     model,
                     prompt,
                     {
@@ -171,18 +176,26 @@ export default {
                     },
                     token
                 );
-
-                if (response_format === "b64_json") {
-                    const videoBase64 = await util.fetchFileBASE64(generatedVideoUrl);
-                    return {
-                        created: util.unixTimestamp(),
-                        data: [{
-                            b64_json: videoBase64,
-                            revised_prompt: prompt
-                        }]
-                    };
+            } catch (err: any) {
+                if (source === 'pool' && err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
+                    await markTokenInvalid(token);
                 }
+                throw err;
+            }
 
+            // 根据response_format返回不同格式的结果
+            if (response_format === "b64_json") {
+                // 获取视频内容并转换为BASE64
+                const videoBase64 = await util.fetchFileBASE64(generatedVideoUrl);
+                return {
+                    created: util.unixTimestamp(),
+                    data: [{
+                        b64_json: videoBase64,
+                        revised_prompt: prompt
+                    }]
+                };
+            } else {
+                // 默认返回URL
                 return {
                     created: util.unixTimestamp(),
                     data: [{
@@ -190,12 +203,7 @@ export default {
                         revised_prompt: prompt
                     }]
                 };
-            };
-
-            if (picked.source === 'pool') {
-                return await withPoolTokenRetry(run, { maxAttempts: 3, strategy: 'roundrobin' });
             }
-            return await run(picked.token);
         }
 
     }
