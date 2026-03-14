@@ -11,6 +11,9 @@ export interface RequestOptions {
 
 export default class Request {
 
+    /** 原始 Koa ctx（便于中间件/路由共享状态） */
+    ctx: any;
+
     /** 请求方法 */
     method: string;
     /** 请求URL */
@@ -38,6 +41,7 @@ export default class Request {
 
     constructor(ctx, options: RequestOptions = {}) {
         const { time } = options;
+        this.ctx = ctx;
         this.method = ctx.request.method;
         this.url = ctx.request.url;
         this.path = ctx.request.path;

@@ -12,3 +12,8 @@ logFileExpires: 2626560000
 tmpFileExpires: 86400000
 # 日志级别
 log_level: info
+
+# Web 管理后台配置
+web_ui:
+  username: admin
+  password: admin

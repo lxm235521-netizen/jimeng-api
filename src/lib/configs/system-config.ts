@@ -32,8 +32,14 @@ export class SystemConfig {
     /** 日志级别 */
     log_level: string;
 
+    /** Web 管理后台配置 */
+    web_ui: {
+        username: string;
+        password: string;
+    };
+
     constructor(options?: any) {
-        const { requestLog, tmpDir, logDir, logWriteInterval, logFileExpires, tmpFileExpires, requestBody, debug, log_level } = options || {};
+        const { requestLog, tmpDir, logDir, logWriteInterval, logFileExpires, tmpFileExpires, requestBody, debug, log_level, web_ui } = options || {};
         this.requestLog = _.defaultTo(requestLog, false);
         this.tmpDir = _.defaultTo(tmpDir, './tmp');
         this.logDir = _.defaultTo(logDir, './logs');
@@ -55,6 +61,11 @@ export class SystemConfig {
         });
         this.debug = _.defaultTo(debug, true);
         this.log_level = _.defaultTo(log_level, 'info');
+
+        this.web_ui = {
+            username: _.defaultTo(web_ui?.username, 'admin'),
+            password: _.defaultTo(web_ui?.password, 'admin')
+        };
     }
 
     get rootDirPath() {

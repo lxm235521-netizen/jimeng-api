@@ -4,6 +4,8 @@ import koaRange from 'koa-range';
 import koaCors from "koa2-cors";
 import koaBody from 'koa-body';
 import _ from 'lodash';
+import path from 'path';
+import fs from 'fs-extra';
 
 import Exception from './exceptions/Exception.ts';
 import Request from './request/Request.ts';
@@ -12,6 +14,9 @@ import FailureBody from './response/FailureBody.ts';
 import EX from './consts/exceptions.ts';
 import logger from './logger.ts';
 import config from './config.ts';
+import APIException from './exceptions/APIException.ts';
+import HTTP_STATUS_CODES from './http-status-codes.ts';
+import { verifyAdminToken } from './admin-auth.ts';
 
 class Server {
 
@@ -23,7 +28,62 @@ class Server {
         this.app.use(koaCors());
         // 范围请求支持
         this.app.use(koaRange);
+
+        // 静态资源：Web 管理后台（/admin）
+        // - 前端构建产物放在 public/admin
+        // - /admin 与 /admin/* 统一回退到 index.html（SPA）
+        const adminPublicDir = path.join(path.resolve(), 'public', 'admin');
+        if (fs.pathExistsSync(adminPublicDir)) {
+            this.app.use(async (ctx: any, next: Function) => {
+                if (ctx.method !== 'GET') return next();
+                if (ctx.path === '/admin' || ctx.path.startsWith('/admin/')) {
+                    const filePath = ctx.path === '/admin'
+                        ? path.join(adminPublicDir, 'index.html')
+                        : path.join(adminPublicDir, ctx.path.replace('/admin/', ''));
+
+                    if (fs.pathExistsSync(filePath) && fs.statSync(filePath).isFile()) {
+                        ctx.type = path.extname(filePath);
+                        ctx.body = fs.createReadStream(filePath);
+                        return;
+                    }
+
+                    // SPA fallback
+                    const indexHtml = path.join(adminPublicDir, 'index.html');
+                    if (fs.pathExistsSync(indexHtml)) {
+                        ctx.type = 'text/html';
+                        ctx.body = fs.createReadStream(indexHtml);
+                        return;
+                    }
+                }
+                return next();
+            });
+            logger.success(`Admin UI static serving enabled at /admin (dir: ${adminPublicDir})`);
+        } else {
+            logger.info(`Admin UI static dir not found, skipping: ${adminPublicDir}`);
+        }
+
         this.router = new KoaRouter({ prefix: config.service.urlPrefix });
+
+        // Admin API 鉴权中间件：拦截 /api/admin/*，放行 /api/admin/login
+        this.app.use(async (ctx: any, next: Function) => {
+            if (!ctx.path.startsWith('/api/admin')) return next();
+            if (ctx.path === '/api/admin/login') return next();
+
+            const authHeader = ctx.request.headers['authorization'] || ctx.request.headers['Authorization'];
+            const auth = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+            if (!auth || typeof auth !== 'string' || !auth.toLowerCase().startsWith('bearer ')) {
+                throw new APIException(EX.API_REQUEST_FAILED, '未登录或登录已过期').setHTTPStatusCode(HTTP_STATUS_CODES.UNAUTHORIZED);
+            }
+            const token = auth.slice(7).trim();
+            try {
+                const payload = verifyAdminToken(token);
+                ctx.state.admin = payload;
+                return next();
+            } catch (e: any) {
+                throw new APIException(EX.API_REQUEST_FAILED, 'Token 无效或已过期').setHTTPStatusCode(HTTP_STATUS_CODES.UNAUTHORIZED);
+            }
+        });
+
         // 前置处理异常拦截
         this.app.use(async (ctx: any, next: Function) => {
             if(ctx.request.type === "application/xml" || ctx.request.type === "application/ssml+xml")

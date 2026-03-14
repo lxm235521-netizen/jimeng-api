@@ -1,0 +1,69 @@
+export const API_BASE = '';
+
+export interface ApiBody<T = any> {
+  code: number
+  message: string
+  data: T
+}
+
+export interface LoginData {
+  token: string
+  exp?: number
+}
+
+async function parseApiError(resp: Response): Promise<string> {
+  let msg = `请求失败 (${resp.status})`
+  try {
+    const data = (await resp.json()) as Partial<ApiBody<any>> & { errmsg?: string; message?: string }
+    msg = (data as any)?.message || (data as any)?.errmsg || msg
+  } catch {
+    // ignore
+  }
+  return msg
+}
+
+export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = getToken()
+  const headers = new Headers(init.headers || {})
+  if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json')
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  const resp = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers,
+  })
+
+  if (!resp.ok) {
+    throw new Error(await parseApiError(resp))
+  }
+
+  const body = (await resp.json()) as ApiBody<T>
+  if (typeof body?.code === 'number' && body.code !== 0) {
+    throw new Error(body?.message || '请求失败')
+  }
+  // 兼容极端情况下后端直接返回裸对象
+  return (body && 'data' in body ? (body.data as T) : (body as any as T))
+}
+
+export async function adminLogin(username: string, password: string): Promise<LoginData> {
+  return await apiFetch<LoginData>('/api/admin/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export async function adminMe(): Promise<any> {
+  return await apiFetch('/api/admin/me', { method: 'GET' })
+}
+
+export function getToken(): string | null {
+  return localStorage.getItem('admin_token')
+}
+
+export function setToken(token: string) {
+  localStorage.setItem('admin_token', token)
+}
+
+export function clearToken() {
+  localStorage.removeItem('admin_token')
+}

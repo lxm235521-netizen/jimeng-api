@@ -16,6 +16,9 @@
     "dev": "tsup src/index.ts --format cjs,esm --sourcemap --dts --watch --onSuccess \"node --enable-source-maps --no-node-snapshot dist/index.js\"",
     "start": "node --enable-source-maps --no-node-snapshot dist/index.js",
     "build": "tsup src/index.ts --format cjs,esm --sourcemap --dts --clean",
+    "web:install": "cd web-ui && npm install",
+    "web:dev": "cd web-ui && npm run dev",
+    "web:build": "cd web-ui && npm run build",
     "test": "echo \"Error: no test specified\" && exit 1",
     "format": "prettier --write \"src/**/*.{ts,js,json}\"",
     "type-check": "tsc --noEmit"
@@ -48,6 +51,7 @@
     "form-data": "^4.0.0",
     "fs-extra": "^11.2.0",
     "https-proxy-agent": "^7.0.6",
+    "jsonwebtoken": "^9.0.3",
     "koa": "^2.15.0",
     "koa-body": "^5.0.0",
     "koa-range": "^0.3.0",
@@ -63,6 +67,7 @@
     "yaml": "^2.3.4"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/lodash": "^4.14.202",
     "@types/mime": "^3.0.4",
     "tsup": "^8.0.2",
