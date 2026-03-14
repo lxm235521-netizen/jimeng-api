@@ -12,8 +12,14 @@ export default {
   prefix: '/api/admin/tokens',
 
   get: {
-    '': async (_request: Request) => {
-      const tokens = await listTokens();
+    '': async (request: Request) => {
+      // 可选过滤：?node=cn|jp|us|hk|sg&status=valid|invalid
+      const node = request.query?.node;
+      const status = request.query?.status;
+      const tokens = await listTokens({
+        node: _.isString(node) ? (node as any) : undefined,
+        status: _.isString(status) ? (status as any) : undefined,
+      });
       return new SuccessfulBody({ tokens });
     },
   },

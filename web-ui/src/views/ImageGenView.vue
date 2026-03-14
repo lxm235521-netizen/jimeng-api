@@ -1,8 +1,21 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { apiFetch } from '../lib/api'
 
 type RespFormat = 'url' | 'b64_json'
+
+type NodeKey = 'cn' | 'jp' | 'us' | 'hk' | 'sg'
+
+interface ModelItem {
+  id: string
+  object: string
+  owned_by?: string
+  description?: string
+}
+
+interface ModelsResp {
+  data: ModelItem[]
+}
 
 interface GenResp {
   created: number
@@ -11,6 +24,11 @@ interface GenResp {
 
 const loading = ref(false)
 const error = ref('')
+
+const node = ref<NodeKey>('cn')
+
+const models = ref<ModelItem[]>([])
+const modelsLoading = ref(false)
 
 const model = ref('jimeng-4.5')
 const prompt = ref('')
@@ -25,6 +43,27 @@ const result = ref<GenResp | null>(null)
 const ratios = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9']
 const resolutions = ['1k', '2k', '4k']
 
+const modelOptions = computed(() => {
+  const list = models.value
+    .map((m) => m.id)
+    .filter((id) => typeof id === 'string' && id.length > 0)
+  // 去重
+  return Array.from(new Set(list))
+})
+
+async function loadModels() {
+  modelsLoading.value = true
+  try {
+    const r = await apiFetch<ModelsResp>('/v1/models', { method: 'GET' })
+    models.value = r.data || []
+    // 如果当前 model 不在列表里，就保持不变（避免覆盖用户输入）
+  } catch (e: any) {
+    // 模型列表失败不影响生成（仍可手填）
+  } finally {
+    modelsLoading.value = false
+  }
+}
+
 async function generate() {
   error.value = ''
   result.value = null
@@ -36,6 +75,7 @@ async function generate() {
   loading.value = true
   try {
     // 注意：不带 Authorization，让后端自动从 Token 池抽取
+    // 通过 X-Token-Node 指定节点（cn/jp/us/hk/sg）
     const body: any = {
       model: model.value,
       prompt: prompt.value,
@@ -48,6 +88,9 @@ async function generate() {
 
     const r = await apiFetch<GenResp>('/v1/images/generations', {
       method: 'POST',
+      headers: {
+        'X-Token-Node': node.value,
+      },
       body: JSON.stringify(body),
     })
     result.value = r
@@ -60,16 +103,32 @@ async function generate() {
 
 function b64ToDataUrl(b64: string) {
   if (!b64) return ''
-  // 通常是 webp/png/jpg，不强制指定 mime
   return `data:image/png;base64,${b64}`
 }
+
+onMounted(() => {
+  loadModels()
+})
 </script>
 
 <template>
   <div class="wrap">
     <div class="topbar">
-      <div class="title">图片生成控制台</div>
-      <div class="meta">自动从 Token 池抽取（无需填写 Authorization）</div>
+      <div>
+        <div class="title">图片生成控制台</div>
+        <div class="meta">自动从 Token 池抽取（无需填写 Authorization）</div>
+      </div>
+
+      <div class="node">
+        <span class="lbl">生成节点</span>
+        <select v-model="node">
+          <option value="cn">国内（CN）</option>
+          <option value="jp">日本（JP）</option>
+          <option value="us">美国（US）</option>
+          <option value="hk">香港（HK）</option>
+          <option value="sg">新加坡（SG）</option>
+        </select>
+      </div>
     </div>
 
     <div class="grid">
@@ -79,8 +138,16 @@ function b64ToDataUrl(b64: string) {
         <div class="form">
           <label class="field">
             <span>模型</span>
-            <input v-model="model" placeholder="jimeng-4.5" />
-            <div class="hint">示例：jimeng-4.5 / jimeng-5.0 / nanobanana（国际站）</div>
+            <div class="row2">
+              <select v-if="modelOptions.length" v-model="model" :disabled="modelsLoading">
+                <option v-for="id in modelOptions" :key="id" :value="id">{{ id }}</option>
+              </select>
+              <input v-else v-model="model" placeholder="jimeng-4.5" />
+              <button class="btn ghost" type="button" @click="loadModels" :disabled="modelsLoading">
+                {{ modelsLoading ? '加载中…' : '刷新模型' }}
+              </button>
+            </div>
+            <div class="hint">模型列表来自 GET /v1/models；如未覆盖到你想用的模型，可直接手填。</div>
           </label>
 
           <label class="field">
@@ -173,9 +240,9 @@ function b64ToDataUrl(b64: string) {
   max-width: 1200px;
   margin: 0 auto 14px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
 .title {
@@ -184,6 +251,18 @@ function b64ToDataUrl(b64: string) {
 
 .meta {
   color: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.node {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lbl {
+  color: rgba(255, 255, 255, 0.7);
   font-size: 13px;
 }
 
@@ -260,6 +339,13 @@ select {
   gap: 10px;
 }
 
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
 .chk {
   display: flex;
   gap: 10px;
@@ -276,6 +362,11 @@ select {
   color: #fff;
   font-weight: 800;
   cursor: pointer;
+}
+
+.btn.ghost {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 600;
 }
 
 .btn:disabled {

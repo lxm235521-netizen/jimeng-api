@@ -6,13 +6,16 @@ import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
 
 import util from '@/lib/util.ts';
+import { parseRegionFromToken, type RegionInfo } from '@/api/controllers/core.ts';
 
 export type TokenStatus = 'valid' | 'invalid';
+export type TokenNode = 'cn' | 'us' | 'jp' | 'hk' | 'sg';
 
 export interface TokenRecord {
   id: string;
   token_value: string;
   status: TokenStatus;
+  node: TokenNode;
   updated_at: string;
   created_at: string;
 }
@@ -21,6 +24,7 @@ interface TokenDBSchema {
   tokens: TokenRecord[];
   meta: {
     rrCursor: number;
+    rrCursorByNode: Record<string, number>;
   };
 }
 
@@ -41,12 +45,15 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
 async function getDB(): Promise<Low<TokenDBSchema>> {
   await fs.ensureDir(DATA_DIR);
   const adapter = new JSONFile<TokenDBSchema>(DB_PATH);
-  const db = new Low<TokenDBSchema>(adapter, { tokens: [], meta: { rrCursor: 0 } });
+  const db = new Low<TokenDBSchema>(adapter, {
+    tokens: [],
+    meta: { rrCursor: 0, rrCursorByNode: {} },
+  });
   await db.read();
-  // lowdb might return null on first read
-  db.data ||= { tokens: [], meta: { rrCursor: 0 } };
+  db.data ||= { tokens: [], meta: { rrCursor: 0, rrCursorByNode: {} } };
   db.data.tokens ||= [];
-  db.data.meta ||= { rrCursor: 0 };
+  db.data.meta ||= { rrCursor: 0, rrCursorByNode: {} };
+  db.data.meta.rrCursorByNode ||= {};
   if (!_.isFinite(db.data.meta.rrCursor as any)) db.data.meta.rrCursor = 0;
   return db;
 }
@@ -58,11 +65,23 @@ function normalizeTokenValue(raw: string): string {
   return v;
 }
 
-export async function listTokens(): Promise<TokenRecord[]> {
+function nodeFromTokenValue(tokenValue: string): TokenNode {
+  // token 自带地区前缀：us-/jp-/hk-/sg-；否则视为国内 cn
+  const info: RegionInfo = parseRegionFromToken(tokenValue);
+  if (info.isUS) return 'us';
+  if (info.isJP) return 'jp';
+  if (info.isHK) return 'hk';
+  if (info.isSG) return 'sg';
+  return 'cn';
+}
+
+export async function listTokens(filter?: { node?: TokenNode; status?: TokenStatus }): Promise<TokenRecord[]> {
   return withLock(async () => {
     const db = await getDB();
-    const tokens = db.data!.tokens;
-    return _.orderBy(tokens, ['updated_at', 'created_at'], ['desc', 'desc']);
+    let items = db.data!.tokens;
+    if (filter?.node) items = items.filter((t) => t.node === filter.node);
+    if (filter?.status) items = items.filter((t) => t.status === filter.status);
+    return _.orderBy(items, ['updated_at', 'created_at'], ['desc', 'desc']);
   });
 }
 
@@ -75,6 +94,7 @@ export async function addToken(tokenValue: string): Promise<TokenRecord> {
     const existed = db.data!.tokens.find((t) => t.token_value === token_value);
     if (existed) {
       existed.status = 'valid';
+      existed.node = nodeFromTokenValue(token_value);
       existed.updated_at = new Date().toISOString();
       await db.write();
       return existed;
@@ -85,6 +105,7 @@ export async function addToken(tokenValue: string): Promise<TokenRecord> {
       id: util.uuid(),
       token_value,
       status: 'valid',
+      node: nodeFromTokenValue(token_value),
       created_at: now,
       updated_at: now,
     };
@@ -109,7 +130,6 @@ export async function importTokens(multilineText: string): Promise<{ inserted: n
     let totalTokens = 0;
 
     for (const line of lines) {
-      // 支持一行里带逗号的多 token（兼容用户粘贴 Bearer a,b,c）
       const parts = line.split(',').map((x) => x.trim()).filter(Boolean);
       for (const p of parts) {
         totalTokens++;
@@ -122,6 +142,7 @@ export async function importTokens(multilineText: string): Promise<{ inserted: n
         const existed = db.data!.tokens.find((t) => t.token_value === token_value);
         if (existed) {
           existed.status = 'valid';
+          existed.node = nodeFromTokenValue(token_value);
           existed.updated_at = new Date().toISOString();
           skipped++;
           continue;
@@ -132,6 +153,7 @@ export async function importTokens(multilineText: string): Promise<{ inserted: n
           id: util.uuid(),
           token_value,
           status: 'valid',
+          node: nodeFromTokenValue(token_value),
           created_at: now,
           updated_at: now,
         });
@@ -168,23 +190,38 @@ export async function markTokenStatusByValue(tokenValue: string, status: TokenSt
   });
 }
 
-export async function pickValidToken(strategy: 'random' | 'roundrobin' = 'roundrobin'): Promise<TokenRecord | null> {
+export async function pickValidToken(
+  strategy: 'random' | 'roundrobin' = 'roundrobin',
+  options?: { node?: TokenNode }
+): Promise<TokenRecord | null> {
   return withLock(async () => {
     const db = await getDB();
-    const valids = db.data!.tokens.filter((t) => t.status === 'valid');
+
+    let valids = db.data!.tokens.filter((t) => t.status === 'valid');
+    if (options?.node) valids = valids.filter((t) => t.node === options.node);
+
     if (valids.length === 0) return null;
 
-    let picked: TokenRecord;
     if (strategy === 'random') {
-      picked = _.sample(valids) as TokenRecord;
-    } else {
-      const cursor = Number(db.data!.meta?.rrCursor || 0);
-      const idx = ((cursor % valids.length) + valids.length) % valids.length;
-      picked = valids[idx];
-      db.data!.meta.rrCursor = idx + 1;
-      await db.write();
+      return _.sample(valids) as TokenRecord;
     }
 
+    // round-robin (per node or global)
+    if (options?.node) {
+      const key = options.node;
+      const cursor = Number(db.data!.meta.rrCursorByNode[key] || 0);
+      const idx = ((cursor % valids.length) + valids.length) % valids.length;
+      const picked = valids[idx];
+      db.data!.meta.rrCursorByNode[key] = idx + 1;
+      await db.write();
+      return picked;
+    }
+
+    const cursor = Number(db.data!.meta.rrCursor || 0);
+    const idx = ((cursor % valids.length) + valids.length) % valids.length;
+    const picked = valids[idx];
+    db.data!.meta.rrCursor = idx + 1;
+    await db.write();
     return picked;
   });
 }
