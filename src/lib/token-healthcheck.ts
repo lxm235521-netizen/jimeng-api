@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import logger from '@/lib/logger.ts';
 import { listTokens, markTokenStatusByValue, TokenRecord } from '@/lib/token-store.ts';
-import { getCredit } from '@/api/controllers/core.ts';
+import { getCredit, getTokenLiveStatus } from '@/api/controllers/core.ts';
 import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
 
@@ -25,6 +25,11 @@ function sleep(ms: number) {
  */
 async function checkOne(token: TokenRecord): Promise<'valid' | 'invalid' | 'unknown'> {
   try {
+    // 先用“账号信息”轻量判断是否登录有效
+    const live = await getTokenLiveStatus(token.token_value);
+    if (!live) return 'invalid';
+
+    // 再用“积分查询”进一步确认链路可用
     await getCredit(token.token_value);
     return 'valid';
   } catch (err: any) {
