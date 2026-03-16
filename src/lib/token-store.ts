@@ -190,6 +190,23 @@ export async function markTokenStatusByValue(tokenValue: string, status: TokenSt
   });
 }
 
+export async function resetAllTokenStatus(status: TokenStatus = 'valid'): Promise<number> {
+  return withLock(async () => {
+    const db = await getDB();
+    const now = new Date().toISOString();
+    let changed = 0;
+    for (const t of db.data!.tokens) {
+      if (t.status !== status) {
+        t.status = status;
+        t.updated_at = now;
+        changed++;
+      }
+    }
+    if (changed > 0) await db.write();
+    return changed;
+  });
+}
+
 export async function pickValidToken(
   strategy: 'random' | 'roundrobin' = 'roundrobin',
   options?: { node?: TokenNode }
@@ -197,9 +214,8 @@ export async function pickValidToken(
   return withLock(async () => {
     const db = await getDB();
 
-    // 注意：不再根据 status 过滤 token（valid/invalid 仅作为展示字段）
-    // 因为“检测/刷新”并不能可靠判断 token 是否可用，过滤可能误伤可用 token。
-    let candidates = db.data!.tokens;
+    // 仅从可用 token 中选择（status=valid 表示可用；status=invalid 表示因积分不足等原因暂不可用）
+    let candidates = db.data!.tokens.filter((t) => t.status === 'valid');
     if (options?.node) candidates = candidates.filter((t) => t.node === options.node);
 
     if (candidates.length === 0) return null;

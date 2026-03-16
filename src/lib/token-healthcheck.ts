@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import logger from '@/lib/logger.ts';
-import { listTokens, TokenRecord } from '@/lib/token-store.ts';
+import { listTokens, resetAllTokenStatus, TokenRecord } from '@/lib/token-store.ts';
 import { getCredit, getTokenLiveStatus } from '@/api/controllers/core.ts';
 import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
@@ -115,4 +115,21 @@ export function startTokenHealthcheckJob(options: TokenHealthcheckOptions = {}) 
       logger.error('[token-healthcheck] runOnStart error:', err);
     });
   }
+}
+
+export function startTokenDailyResetJob(options?: { schedule?: string }) {
+  const schedule = options?.schedule ?? '0 0 * * *'; // every day 00:00
+  cron.schedule(
+    schedule,
+    async () => {
+      try {
+        const changed = await resetAllTokenStatus('valid');
+        logger.info(`[token-reset] reset all tokens to valid: changed=${changed}`);
+      } catch (err: any) {
+        logger.error('[token-reset] job error:', err);
+      }
+    },
+    { timezone: 'Asia/Shanghai' }
+  );
+  logger.info(`[token-reset] cron scheduled: ${schedule} (Asia/Shanghai)`);
 }

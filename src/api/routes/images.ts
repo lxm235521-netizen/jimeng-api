@@ -10,6 +10,11 @@ import { resolveTokenFromRequest, markTokenInvalid } from "@/lib/token-picker.ts
 import APIException from "@/lib/exceptions/APIException.ts";
 import EX from "@/api/consts/exceptions.ts";
 
+function isNoCreditsError(err: any): boolean {
+  const msg = String(err?.errmsg || err?.message || '');
+  return msg.includes('(错误码: 1006)') || msg.includes('错误码: 1006') || msg.includes('1006');
+}
+
 export default {
   prefix: "/v1/images",
 
@@ -68,9 +73,16 @@ export default {
           token
         );
       } catch (err: any) {
-        // 如果是池里抽出来的 token 且已过期，标记为 invalid
-        if (source === 'pool' && err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
-          await markTokenInvalid(token);
+        // 仅在 token 来自池时处理状态写入
+        if (source === 'pool') {
+          // 积分不足（1006）：标记为不可用，避免后续继续选中
+          if (isNoCreditsError(err)) {
+            await markTokenInvalid(token);
+          }
+          // 仍保留登录失效的标记（可选）
+          if (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
+            await markTokenInvalid(token);
+          }
         }
         throw err;
       }
@@ -220,8 +232,13 @@ export default {
           token
         );
       } catch (err: any) {
-        if (source === 'pool' && err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
-          await markTokenInvalid(token);
+        if (source === 'pool') {
+          if (isNoCreditsError(err)) {
+            await markTokenInvalid(token);
+          }
+          if (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
+            await markTokenInvalid(token);
+          }
         }
         throw err;
       }

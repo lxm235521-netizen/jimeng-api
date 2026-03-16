@@ -6,7 +6,7 @@ import "@/lib/initialize.ts";
 import server from "@/lib/server.ts";
 import routes from "@/api/routes/index.ts";
 import logger from "@/lib/logger.ts";
-import { startTokenHealthcheckJob } from "@/lib/token-healthcheck.ts";
+import { startTokenDailyResetJob, startTokenHealthcheckJob } from "@/lib/token-healthcheck.ts";
 
 const startupTime = performance.now();
 
@@ -30,6 +30,9 @@ const startupTime = performance.now();
     batchSize: 20,
     delayMs: 250,
   });
+
+  // Token 池状态重置：每天北京时间 00:00 把所有 token 置为可用
+  startTokenDailyResetJob();
 
   await server.listen();
 

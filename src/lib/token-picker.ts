@@ -65,7 +65,5 @@ export async function resolveTokenFromRequest(headers: any): Promise<ResolveToke
 }
 
 export async function markTokenInvalid(tokenValue: string) {
-  // 不再自动写入 invalid，避免误伤：实际可用性以真实调用结果为准。
-  // 仍保留接口以兼容旧调用点。
-  return;
+  await markTokenStatusByValue(tokenValue, 'invalid');
 }

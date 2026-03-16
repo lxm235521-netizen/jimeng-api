@@ -9,6 +9,11 @@ import { resolveTokenFromRequest, markTokenInvalid } from '@/lib/token-picker.ts
 import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
 
+function isNoCreditsError(err: any): boolean {
+    const msg = String(err?.errmsg || err?.message || '');
+    return msg.includes('(错误码: 1006)') || msg.includes('错误码: 1006') || msg.includes('1006');
+}
+
 export default {
 
     prefix: '/v1/videos',
@@ -177,8 +182,13 @@ export default {
                     token
                 );
             } catch (err: any) {
-                if (source === 'pool' && err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
-                    await markTokenInvalid(token);
+                if (source === 'pool') {
+                    if (isNoCreditsError(err)) {
+                        await markTokenInvalid(token);
+                    }
+                    if (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
+                        await markTokenInvalid(token);
+                    }
                 }
                 throw err;
             }
