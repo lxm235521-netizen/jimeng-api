@@ -197,29 +197,31 @@ export async function pickValidToken(
   return withLock(async () => {
     const db = await getDB();
 
-    let valids = db.data!.tokens.filter((t) => t.status === 'valid');
-    if (options?.node) valids = valids.filter((t) => t.node === options.node);
+    // 注意：不再根据 status 过滤 token（valid/invalid 仅作为展示字段）
+    // 因为“检测/刷新”并不能可靠判断 token 是否可用，过滤可能误伤可用 token。
+    let candidates = db.data!.tokens;
+    if (options?.node) candidates = candidates.filter((t) => t.node === options.node);
 
-    if (valids.length === 0) return null;
+    if (candidates.length === 0) return null;
 
     if (strategy === 'random') {
-      return _.sample(valids) as TokenRecord;
+      return _.sample(candidates) as TokenRecord;
     }
 
     // round-robin (per node or global)
     if (options?.node) {
       const key = options.node;
       const cursor = Number(db.data!.meta.rrCursorByNode[key] || 0);
-      const idx = ((cursor % valids.length) + valids.length) % valids.length;
-      const picked = valids[idx];
+      const idx = ((cursor % candidates.length) + candidates.length) % candidates.length;
+      const picked = candidates[idx];
       db.data!.meta.rrCursorByNode[key] = idx + 1;
       await db.write();
       return picked;
     }
 
     const cursor = Number(db.data!.meta.rrCursor || 0);
-    const idx = ((cursor % valids.length) + valids.length) % valids.length;
-    const picked = valids[idx];
+    const idx = ((cursor % candidates.length) + candidates.length) % candidates.length;
+    const picked = candidates[idx];
     db.data!.meta.rrCursor = idx + 1;
     await db.write();
     return picked;

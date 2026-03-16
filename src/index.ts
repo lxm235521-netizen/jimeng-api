@@ -21,10 +21,12 @@ const startupTime = performance.now();
 
   server.attachRoutes(routes);
 
-  // Token 池存活检测：默认每 4 小时跑一次，并在启动时跑一遍
+  // Token 池存活检测：默认每 4 小时跑一次
+  // 注意：runOnStart 设为 false，避免服务每次重启时因为网络波动等原因
+  // 误把仍然可用的 token 标记为 invalid。需要时可在管理后台手动触发健康检查。
   startTokenHealthcheckJob({
     schedule: "0 */4 * * *",
-    runOnStart: true,
+    runOnStart: false,
     batchSize: 20,
     delayMs: 250,
   });

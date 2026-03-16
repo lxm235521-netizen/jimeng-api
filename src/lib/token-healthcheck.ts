@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import logger from '@/lib/logger.ts';
-import { listTokens, markTokenStatusByValue, TokenRecord } from '@/lib/token-store.ts';
+import { listTokens, TokenRecord } from '@/lib/token-store.ts';
 import { getCredit, getTokenLiveStatus } from '@/api/controllers/core.ts';
 import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
@@ -53,29 +53,29 @@ export async function runTokenHealthcheckOnce(options: TokenHealthcheckOptions =
   const delayMs = options.delayMs ?? 250;
 
   const tokens = await listTokens();
-  const valids = tokens.filter((t) => t.status === 'valid');
+  const candidates = tokens;
 
-  if (valids.length === 0) {
-    logger.info('[token-healthcheck] no valid tokens');
+  if (candidates.length === 0) {
+    logger.info('[token-healthcheck] no tokens');
     return { total: 0, checked: 0, invalidated: 0, unknown: 0 };
   }
 
-  logger.info(`[token-healthcheck] start: valid=${valids.length}`);
+  logger.info(`[token-healthcheck] start: total=${candidates.length}`);
 
   let checked = 0;
   let invalidated = 0;
   let unknown = 0;
 
-  for (let i = 0; i < valids.length; i++) {
-    const t = valids[i];
+  for (let i = 0; i < candidates.length; i++) {
+    const t = candidates[i];
 
     const result = await checkOne(t);
     checked++;
 
     if (result === 'invalid') {
-      await markTokenStatusByValue(t.token_value, 'invalid');
       invalidated++;
-      logger.warn(`[token-healthcheck] invalid token: ${t.id}`);
+      // 注意：不再写回 token.status，避免误判导致可用 token 被标记为 invalid
+      logger.warn(`[token-healthcheck] invalid token (no status change): ${t.id}`);
     } else if (result === 'unknown') {
       unknown++;
       logger.warn(`[token-healthcheck] unknown (keep status): ${t.id}`);
@@ -89,7 +89,7 @@ export async function runTokenHealthcheckOnce(options: TokenHealthcheckOptions =
   }
 
   logger.info(`[token-healthcheck] done: checked=${checked}, invalidated=${invalidated}, unknown=${unknown}`);
-  return { total: valids.length, checked, invalidated, unknown };
+  return { total: candidates.length, checked, invalidated, unknown };
 }
 
 export function startTokenHealthcheckJob(options: TokenHealthcheckOptions = {}) {

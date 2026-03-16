@@ -9,6 +9,7 @@ const route = useRoute()
 const items = [
   { path: '/home', label: '概览' },
   { path: '/image-gen', label: '图片生成' },
+  { path: '/video-gen', label: '视频生成' },
   { path: '/tokens', label: 'Token 管理' },
 ]
 

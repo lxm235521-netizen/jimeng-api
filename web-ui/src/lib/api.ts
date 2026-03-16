@@ -11,6 +11,31 @@ export interface LoginData {
   exp?: number
 }
 
+// ---- Admin Token types & APIs ----
+export interface AdminTokenRecord {
+  id: string
+  token_value: string
+  status: 'valid' | 'invalid'
+  node?: 'cn' | 'jp' | 'us' | 'hk' | 'sg'
+  created_at: string
+  updated_at: string
+}
+
+export async function adminTokenList(): Promise<{ tokens: AdminTokenRecord[] }> {
+  return await apiFetch<{ tokens: AdminTokenRecord[] }>('/api/admin/tokens', { method: 'GET' })
+}
+
+export async function adminTokenDelete(id: string): Promise<void> {
+  await apiFetch(`/api/admin/tokens/${id}`, { method: 'DELETE' })
+}
+
+export async function adminTokenImport(text: string): Promise<{ inserted: number; skipped: number; totalLines?: number; totalTokens?: number }> {
+  return await apiFetch('/api/admin/tokens/import', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  })
+}
+
 async function parseApiError(resp: Response): Promise<string> {
   let msg = `请求失败 (${resp.status})`
   try {
@@ -42,7 +67,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   const token = getToken()
   const headers = new Headers(init.headers || {})
 
-  if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json')
+  // 对于 JSON 请求自动补 Content-Type，但如果是 FormData 让浏览器自己处理 boundary
+  if (!headers.has('Content-Type') && init.body && !(init.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json')
+  }
 
   // 只对 /api/admin 前缀自动加 Authorization
   if (token && path.startsWith('/api/admin')) {

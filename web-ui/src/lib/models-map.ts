@@ -17,3 +17,54 @@ export const IMAGE_MODELS_BY_NODE: Record<NodeKey, string[]> = {
   jp: ['nanobanana', 'nanobananapro', 'jimeng-5.0', 'jimeng-4.6', 'jimeng-4.5', 'jimeng-4.1', 'jimeng-4.0', 'jimeng-3.0'],
   sg: ['nanobanana', 'nanobananapro', 'jimeng-5.0', 'jimeng-4.6', 'jimeng-4.5', 'jimeng-4.1', 'jimeng-4.0', 'jimeng-3.0'],
 }
+
+// 视频模型（与后端 VIDEO_MODEL_MAP* 对应）
+export const VIDEO_MODELS_BY_NODE: Record<NodeKey, string[]> = {
+  cn: [
+    'jimeng-video-seedance-2.0',
+    'jimeng-video-seedance-2.0-fast',
+    'jimeng-video-3.5-pro',
+    'jimeng-video-3.0-pro',
+    'jimeng-video-3.0',
+    'jimeng-video-3.0-fast',
+    'jimeng-video-2.0',
+    'jimeng-video-2.0-pro',
+  ],
+  us: [
+    'jimeng-video-3.5-pro',
+    'jimeng-video-3.0',
+  ],
+  hk: [
+    'jimeng-video-veo3',
+    'jimeng-video-veo3.1',
+    'jimeng-video-sora2',
+    'jimeng-video-3.5-pro',
+    'jimeng-video-3.0-pro',
+    'jimeng-video-3.0',
+    'jimeng-video-3.0-fast',
+    'jimeng-video-2.0',
+    'jimeng-video-2.0-pro',
+  ],
+  jp: [
+    'jimeng-video-veo3',
+    'jimeng-video-veo3.1',
+    'jimeng-video-sora2',
+    'jimeng-video-3.5-pro',
+    'jimeng-video-3.0-pro',
+    'jimeng-video-3.0',
+    'jimeng-video-3.0-fast',
+    'jimeng-video-2.0',
+    'jimeng-video-2.0-pro',
+  ],
+  sg: [
+    'jimeng-video-veo3',
+    'jimeng-video-veo3.1',
+    'jimeng-video-sora2',
+    'jimeng-video-3.5-pro',
+    'jimeng-video-3.0-pro',
+    'jimeng-video-3.0',
+    'jimeng-video-3.0-fast',
+    'jimeng-video-2.0',
+    'jimeng-video-2.0-pro',
+  ],
+}

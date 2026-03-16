@@ -1,5 +1,6 @@
 # 构建阶段
-FROM node:18-alpine AS builder
+# Vite 需要 Node 20.19+（或 22.12+），因此构建阶段使用更高版本
+FROM node:22-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app
@@ -7,13 +8,17 @@ WORKDIR /app
 # 安装构建依赖（包括Python和make，某些npm包需要）
 RUN apk add --no-cache python3 make g++
 
-# 复制package文件以优化Docker层缓存
+# 复制 package 文件以优化 Docker 层缓存
 COPY package.json package-lock.json ./
+COPY web-ui/package.json web-ui/package-lock.json ./web-ui/
 
 # 安装所有依赖（包括devDependencies）
 RUN npm ci --registry https://registry.npmmirror.com/
 
-# 复制源代码
+# 安装 web-ui 依赖（在 Linux 镜像内安装，避免拷贝 Windows 的 node_modules）
+RUN cd web-ui && npm ci --registry https://registry.npmmirror.com/
+
+# 复制源代码（配合 .dockerignore 排除 node_modules）
 COPY . .
 
 # 接收版本号参数并更新 package.json
@@ -25,10 +30,11 @@ RUN if [ -n "$VERSION" ]; then \
     fi
 
 # 构建应用
-RUN npm run build
+# 先构建 Web 管理后台（产物写入 public/admin），再构建后端 dist
+RUN npm run web:build && npm run build
 
 # 生产阶段
-FROM node:18-alpine AS production
+FROM node:22-alpine AS production
 
 # 安装健康检查工具
 RUN apk add --no-cache wget
@@ -51,6 +57,7 @@ RUN npm ci --omit=dev --registry https://registry.npmmirror.com/ && \
 # 从构建阶段复制构建产物
 COPY --from=builder --chown=jimeng:nodejs /app/dist ./dist
 COPY --from=builder --chown=jimeng:nodejs /app/configs ./configs
+COPY --from=builder --chown=jimeng:nodejs /app/public ./public
 
 # 创建应用需要的目录并设置权限
 RUN mkdir -p /app/logs /app/tmp && \

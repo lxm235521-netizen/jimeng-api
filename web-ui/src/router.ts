@@ -3,6 +3,7 @@ import LoginView from './views/LoginView.vue'
 import HomeView from './views/HomeView.vue'
 import TokensView from './views/TokensView.vue'
 import ImageGenView from './views/ImageGenView.vue'
+import VideoGenView from './views/VideoGenView.vue'
 import AdminLayout from './layouts/AdminLayout.vue'
 import { getToken, clearToken } from './lib/api'
 
@@ -17,6 +18,7 @@ const router = createRouter({
         { path: '', redirect: '/home' },
         { path: 'home', component: HomeView },
         { path: 'image-gen', component: ImageGenView },
+        { path: 'video-gen', component: VideoGenView },
         { path: 'tokens', component: TokensView },
       ],
     },

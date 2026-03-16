@@ -51,13 +51,15 @@ export async function resolveTokenFromRequest(headers: any): Promise<ResolveToke
   if (!rec) {
     throw new Error(
       node
-        ? `未提供生成 Token，且 Token 池为空（没有有效 token，node=${node}）`
-        : '未提供生成 Token，且 Token 池为空（没有有效 token）'
+        ? `未提供生成 Token，且 Token 池为空（node=${node}）`
+        : '未提供生成 Token，且 Token 池为空'
     );
   }
   return { token: rec.token_value, source: 'pool', node };
 }
 
 export async function markTokenInvalid(tokenValue: string) {
-  await markTokenStatusByValue(tokenValue, 'invalid');
+  // 不再自动写入 invalid，避免误伤：实际可用性以真实调用结果为准。
+  // 仍保留接口以兼容旧调用点。
+  return;
 }

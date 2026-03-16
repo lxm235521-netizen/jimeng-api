@@ -26,7 +26,11 @@ const resolution = ref('2k')
 const intelligent_ratio = ref(false)
 const response_format = ref<RespFormat>('url')
 
-const result = ref<GenResp | null>(null)
+// 参考图片：本地文件 + URL
+const refImagesFiles = ref<File[]>([])
+const refImagesUrls = ref('')
+
+const result = ref<GenResp | any | null>(null)
 
 const ratios = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9']
 const resolutions = computed(() => {
@@ -41,6 +45,22 @@ const resolutions = computed(() => {
 })
 
 const modelOptions = computed(() => IMAGE_MODELS_BY_NODE[node.value] || [])
+
+const imageItems = computed(() => {
+  const r: any = result.value
+  if (!r) return []
+  if (Array.isArray(r)) return r
+  if (Array.isArray(r.data)) return r.data
+  return []
+})
+
+const createdValue = computed(() => {
+  const r: any = result.value
+  if (r && !Array.isArray(r) && typeof r.created === 'number') {
+    return r.created
+  }
+  return null
+})
 
 async function loadModelsHint() {
   modelsLoading.value = true
@@ -71,9 +91,71 @@ async function generate() {
   try {
     // 不带 Authorization，让后端自动从 Token 池抽取
     // 通过 X-Token-Node 指定节点（cn/jp/us/hk/sg）
+
+    // 解析参考图片（本地 + URL）
+    const hasRefFiles = refImagesFiles.value.length > 0
+    const urlLines = (refImagesUrls.value || '')
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const hasRefUrls = urlLines.length > 0
+
+    if (!hasRefFiles && !hasRefUrls) {
+      // 纯文生图：走 /generations JSON 接口
+      const body: any = {
+        model: model.value,
+        prompt: prompt.value,
+        response_format: response_format.value,
+      }
+      if (negative_prompt.value.trim()) body.negative_prompt = negative_prompt.value
+      if (ratio.value) body.ratio = ratio.value
+      if (resolution.value) body.resolution = resolution.value
+      if (intelligent_ratio.value) body.intelligent_ratio = true
+
+      const r = await apiFetch<GenResp>('/v1/images/generations', {
+        method: 'POST',
+        headers: {
+          'X-Token-Node': node.value,
+        },
+        body: JSON.stringify(body),
+      })
+      result.value = r
+      return
+    }
+
+    // 图生图：走 /compositions
+    // 1) 有本地文件时使用 multipart/form-data
+    if (hasRefFiles) {
+      const fd = new FormData()
+      fd.append('model', model.value)
+      fd.append('prompt', prompt.value)
+      if (negative_prompt.value.trim()) fd.append('negative_prompt', negative_prompt.value)
+      if (ratio.value) fd.append('ratio', ratio.value)
+      if (resolution.value) fd.append('resolution', resolution.value)
+      if (intelligent_ratio.value) fd.append('intelligent_ratio', 'true')
+      // sample_strength 使用后端默认 0.5，这里先不暴露
+
+      // images 字段：支持多张
+      refImagesFiles.value.forEach((file) => {
+        fd.append('images', file)
+      })
+
+      const r = await apiFetch<GenResp>('/v1/images/compositions', {
+        method: 'POST',
+        headers: {
+          'X-Token-Node': node.value,
+        },
+        body: fd,
+      })
+      result.value = r
+      return
+    }
+
+    // 2) 只有 URL 时，使用 JSON 形式的 images 数组
     const body: any = {
       model: model.value,
       prompt: prompt.value,
+      images: urlLines,
       response_format: response_format.value,
     }
     if (negative_prompt.value.trim()) body.negative_prompt = negative_prompt.value
@@ -81,7 +163,7 @@ async function generate() {
     if (resolution.value) body.resolution = resolution.value
     if (intelligent_ratio.value) body.intelligent_ratio = true
 
-    const r = await apiFetch<GenResp>('/v1/images/generations', {
+    const r = await apiFetch<GenResp>('/v1/images/compositions', {
       method: 'POST',
       headers: {
         'X-Token-Node': node.value,
@@ -100,6 +182,12 @@ async function generate() {
 function b64ToDataUrl(b64: string) {
   if (!b64) return ''
   return `data:image/png;base64,${b64}`
+}
+
+function onRefImagesChange(e: Event) {
+  const input = e.target as HTMLInputElement | null
+  const files = Array.from(input?.files || [])
+  refImagesFiles.value = files
 }
 
 onMounted(() => {
@@ -190,6 +278,22 @@ watch(node, () => {
             <span>intelligent_ratio（仅部分模型有效）</span>
           </label>
 
+          <div class="ref-block">
+            <div class="ref-title">参考图片（可选，仅部分模型支持图生图）</div>
+            <div class="ref-row">
+              <span class="lbl">本地图片</span>
+              <input type="file" multiple accept="image/*" @change="onRefImagesChange" />
+            </div>
+            <div class="ref-row">
+              <span class="lbl">图片 URL</span>
+              <textarea
+                v-model="refImagesUrls"
+                class="ta small"
+                placeholder="每行一条图片 URL；如同时上传本地图片，则以本地图片为准"
+              />
+            </div>
+          </div>
+
           <button class="btn" @click="generate" :disabled="loading">
             {{ loading ? '生成中…' : '生成图片' }}
           </button>
@@ -203,14 +307,11 @@ watch(node, () => {
         <div v-if="!result" class="p">提交后在这里展示结果（url 或 base64）。</div>
 
         <div v-else class="result">
-          <div class="mono">created: {{ result.created }}</div>
+          <div v-if="createdValue !== null" class="mono">created: {{ createdValue }}</div>
 
-          <div class="imgs">
-            <template v-for="(item, idx) in result.data" :key="idx">
+          <div class="imgs" v-if="imageItems.length">
+            <template v-for="(item, idx) in imageItems" :key="idx">
               <div class="imgCard">
-                <div v-if="item.url" class="mono">
-                  <a :href="item.url" target="_blank" rel="noreferrer">{{ item.url }}</a>
-                </div>
                 <img v-if="item.url" :src="item.url" />
 
                 <div v-else-if="item.b64_json" class="mono">base64 返回（已在下方预览）</div>
@@ -218,6 +319,8 @@ watch(node, () => {
               </div>
             </template>
           </div>
+
+          <div v-else class="p">未返回任何图片数据（data 为空），请查看下方原始返回。</div>
 
           <details class="raw">
             <summary>原始 JSON</summary>
@@ -322,6 +425,31 @@ watch(node, () => {
   font-size: 13px;
 }
 
+.ref-block {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.15);
+  display: grid;
+  gap: 8px;
+}
+
+.ref-title {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+.ref-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.ta.small {
+  min-height: 64px;
+}
+
 .result {
   display: grid;
   gap: 10px;
@@ -329,7 +457,7 @@ watch(node, () => {
 
 .imgs {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
 

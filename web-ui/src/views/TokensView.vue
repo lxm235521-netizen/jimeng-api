@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { apiFetch } from '../lib/api'
 
 type NodeKey = 'cn' | 'jp' | 'us' | 'hk' | 'sg'
@@ -7,7 +7,6 @@ type NodeKey = 'cn' | 'jp' | 'us' | 'hk' | 'sg'
 interface TokenRecord {
   id: string
   token_value: string
-  status: 'valid' | 'invalid'
   node?: NodeKey
   created_at: string
   updated_at: string
@@ -30,8 +29,6 @@ const checkResult = ref<string>('')
 
 const importNode = ref<NodeKey>('cn')
 const filterNode = ref<NodeKey | 'all'>('all')
-
-const validCount = computed(() => tokens.value.filter((t) => t.status === 'valid').length)
 
 function maskToken(v: string) {
   if (!v) return ''
@@ -153,7 +150,7 @@ onMounted(() => {
     <div class="topbar">
       <div>
         <div class="title">Token 池管理</div>
-        <div class="meta">共 {{ tokens.length }} 个 / 有效 {{ validCount }} 个</div>
+        <div class="meta">共 {{ tokens.length }} 个</div>
       </div>
 
       <div class="sp"></div>
@@ -191,7 +188,6 @@ onMounted(() => {
           <div>ID</div>
           <div>Node</div>
           <div>Token</div>
-          <div>Status</div>
           <div>Updated</div>
           <div>Created</div>
           <div></div>
@@ -205,10 +201,6 @@ onMounted(() => {
             <div class="mono">{{ t.id.slice(0, 8) }}</div>
             <div class="mono">{{ t.node || '-' }}</div>
             <div class="mono" :title="t.token_value">{{ maskToken(t.token_value) }}</div>
-            <div>
-              <span class="dot" :class="t.status" title="valid=绿 / invalid=红"></span>
-              <span class="tag" :class="t.status">{{ t.status }}</span>
-            </div>
             <div class="mono">{{ t.updated_at }}</div>
             <div class="mono">{{ t.created_at }}</div>
             <div class="ops">
@@ -305,7 +297,7 @@ onMounted(() => {
 
 .tr {
   display: grid;
-  grid-template-columns: 90px 60px 1fr 140px 220px 220px 90px;
+  grid-template-columns: 90px 60px 1fr 220px 220px 90px;
   gap: 10px;
   padding: 10px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
