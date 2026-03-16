@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { apiFetch } from '../lib/api'
 
 type NodeKey = 'cn' | 'jp' | 'us' | 'hk' | 'sg'
+type TokenStatus = 'valid' | 'invalid'
 
 interface TokenRecord {
   id: string
@@ -30,6 +31,7 @@ const checkResult = ref<string>('')
 
 const importNode = ref<NodeKey>('cn')
 const filterNode = ref<NodeKey | 'all'>('all')
+const filterStatus = ref<TokenStatus | 'all'>('all')
 
 const noCreditCount = computed(() => tokens.value.filter((t) => t.status === 'invalid').length)
 
@@ -60,13 +62,51 @@ async function loadList() {
   loading.value = true
   error.value = ''
   try {
-    const qs = filterNode.value === 'all' ? '' : `?node=${filterNode.value}`
+    const qsParts: string[] = []
+    if (filterNode.value !== 'all') qsParts.push(`node=${filterNode.value}`)
+    if (filterStatus.value !== 'all') qsParts.push(`status=${filterStatus.value}`)
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : ''
     const data = await apiFetch<{ tokens: TokenRecord[] }>(`/api/admin/tokens${qs}`, { method: 'GET' })
     tokens.value = data.tokens || []
   } catch (e: any) {
     error.value = e?.message || '加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+function exportTokensTxt() {
+  const lines = tokens.value.map((t) => t.token_value).filter(Boolean).join('\n')
+  const blob = new Blob([lines + (lines ? '\n' : '')], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  const nodePart = filterNode.value === 'all' ? 'all' : filterNode.value
+  const statusPart = filterStatus.value === 'all' ? 'all' : filterStatus.value
+  a.href = url
+  a.download = `tokens-${nodePart}-${statusPart}-${ts}.txt`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+async function resetTokens(scope: 'all' | 'node') {
+  const ok = scope === 'all'
+    ? confirm('确认重置：将所有 Token 状态设为“可用”？')
+    : confirm(`确认重置：将节点 ${filterNode.value} 的 Token 状态设为“可用”？`)
+  if (!ok) return
+  error.value = ''
+  try {
+    const body = scope === 'node' && filterNode.value !== 'all' ? { node: filterNode.value } : {}
+    const r = await apiFetch<{ ok: true; changed: number }>('/api/admin/tokens/reset', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    checkResult.value = `重置完成：changed=${r.changed}`
+    await loadList()
+  } catch (e: any) {
+    error.value = e?.message || '重置失败'
   }
 }
 
@@ -170,10 +210,30 @@ onMounted(() => {
         </select>
       </div>
 
+      <div class="filters">
+        <span class="lbl">筛选状态</span>
+        <select v-model="filterStatus" @change="loadList">
+          <option value="all">全部</option>
+          <option value="valid">可用</option>
+          <option value="invalid">无积分</option>
+        </select>
+      </div>
+
+      <button
+        class="btn ghost"
+        @click="resetTokens('node')"
+        :disabled="filterNode === 'all'"
+        :title="filterNode === 'all' ? '请选择具体节点后再重置' : '重置当前节点 Token 为可用'"
+      >
+        重置当前节点
+      </button>
+      <button class="btn ghost" @click="resetTokens('all')">重置全部</button>
+
       <button class="btn ghost" @click="runCheck" :disabled="checking">
         {{ checking ? '检测中…' : '立即检测' }}
       </button>
       <button class="btn" @click="showImport = true">批量导入</button>
+      <button class="btn ghost" @click="exportTokensTxt" :disabled="tokens.length === 0">导出 TXT</button>
       <button class="btn ghost" @click="loadList" :disabled="loading">刷新</button>
     </div>
 
