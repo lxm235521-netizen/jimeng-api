@@ -5,7 +5,7 @@ import SuccessfulBody from '@/lib/response/SuccessfulBody.ts';
 import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
 
-import { addToken, deleteToken, importTokens, listTokens } from '@/lib/token-store.ts';
+import { addToken, deleteToken, importTokens, listTokens, resetAllTokenStatus, resetTokenStatusByFilter } from '@/lib/token-store.ts';
 import { runTokenHealthcheckOnce } from '@/lib/token-healthcheck.ts';
 
 export default {
@@ -46,6 +46,18 @@ export default {
         delayMs: 250,
       });
       return new SuccessfulBody(result);
+    },
+
+    '/reset': async (request: Request) => {
+      // 可选：body.node=cn|jp|us|hk|sg；不传则重置全部
+      const node = request.body?.node;
+      let changed = 0;
+      if (_.isString(node) && node.trim()) {
+        changed = await resetTokenStatusByFilter({ node: node.trim() as any }, 'valid');
+      } else {
+        changed = await resetAllTokenStatus('valid');
+      }
+      return new SuccessfulBody({ ok: true, changed });
     },
   },
 

@@ -207,6 +207,27 @@ export async function resetAllTokenStatus(status: TokenStatus = 'valid'): Promis
   });
 }
 
+export async function resetTokenStatusByFilter(
+  filter: { node?: TokenNode },
+  status: TokenStatus = 'valid'
+): Promise<number> {
+  return withLock(async () => {
+    const db = await getDB();
+    const now = new Date().toISOString();
+    let changed = 0;
+    for (const t of db.data!.tokens) {
+      if (filter?.node && t.node !== filter.node) continue;
+      if (t.status !== status) {
+        t.status = status;
+        t.updated_at = now;
+        changed++;
+      }
+    }
+    if (changed > 0) await db.write();
+    return changed;
+  });
+}
+
 export async function pickValidToken(
   strategy: 'random' | 'roundrobin' = 'roundrobin',
   options?: { node?: TokenNode }

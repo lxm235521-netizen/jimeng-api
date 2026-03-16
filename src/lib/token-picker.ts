@@ -57,8 +57,8 @@ export async function resolveTokenFromRequest(headers: any): Promise<ResolveToke
   if (!rec) {
     throw new Error(
       node
-        ? `未提供生成 Token，且 Token 池为空（node=${node}）`
-        : '未提供生成 Token，且 Token 池为空'
+        ? `未提供生成 Token，且 Token 池无可用 token（node=${node}）。可能原因：1) 该节点未导入 token；2) 该节点 token 因积分不足被临时标记为不可用，可在 /api/admin/tokens/reset 重置或等待北京时间 0:00 自动重置。`
+        : '未提供生成 Token，且 Token 池无可用 token。可能原因：1) 未导入 token；2) token 因积分不足被临时标记为不可用，可在 /api/admin/tokens/reset 重置或等待北京时间 0:00 自动重置。'
     );
   }
   return { token: rec.token_value, source: 'pool', node };
