@@ -35,8 +35,14 @@ function looksLikeJwt(token: string): boolean {
 export async function resolveTokenFromRequest(headers: any): Promise<ResolveTokenResult> {
   const node = normalizeNode(headers?.['x-token-node'] || headers?.['X-Token-Node']);
 
+  // 兼容 NewAPI 等网关：很多网关会把自己的 Authorization 下发到上游
+  // 但该 Authorization 并不是即梦 sessionid，使用它会导致 “check login error”。
+  // 约定：当请求携带 X-From-NewAPI: 1 时，强制忽略 Authorization，直接走 Token 池。
+  const fromNewApi = String(headers?.['x-from-newapi'] || headers?.['X-From-NewAPI'] || '').trim();
+  const forcePool = fromNewApi === '1' || fromNewApi.toLowerCase() === 'true';
+
   const auth = headers?.authorization || headers?.Authorization;
-  if (_.isString(auth) && auth.trim()) {
+  if (!forcePool && _.isString(auth) && auth.trim()) {
     const tokens = tokenSplit(auth);
     const token = _.sample(tokens);
 
