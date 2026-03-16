@@ -42,8 +42,6 @@ export default {
         .validate("body.sample_strength", (v) => _.isUndefined(v) || _.isFinite(v))
         .validate("body.response_format", (v) => _.isUndefined(v) || _.isString(v));
 
-      const { token, source } = await resolveTokenFromRequest(request.headers);
-
       const {
         model,
         prompt,
@@ -58,47 +56,51 @@ export default {
 
       const responseFormat = _.defaultTo(response_format, "url");
 
-      let imageUrls: string[];
-      try {
-        imageUrls = await generateImages(
-          finalModel,
-          prompt,
-          {
-            ratio,
-            resolution,
-            sampleStrength,
-            negativePrompt,
-            intelligentRatio,
-          },
-          token
-        );
-      } catch (err: any) {
-        // 仅在 token 来自池时处理状态写入
-        if (source === 'pool') {
-          // 积分不足（1006）：标记为不可用，避免后续继续选中
-          if (isNoCreditsError(err)) {
-            await markTokenInvalid(token);
-          }
-          // 仍保留登录失效的标记（可选）
-          if (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
-            await markTokenInvalid(token);
-          }
-        }
-        throw err;
-      }
+      // Token 池自动重试：
+      // - 积分不足（1006）或 token 失效：将该 token 标记为不可用并换下一个重试
+      // - 其他错误：直接抛出
+      let lastErr: any;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const { token, source } = await resolveTokenFromRequest(request.headers);
+        try {
+          const imageUrls = await generateImages(
+            finalModel,
+            prompt,
+            {
+              ratio,
+              resolution,
+              sampleStrength,
+              negativePrompt,
+              intelligentRatio,
+            },
+            token
+          );
 
-      let data: any[] = [];
-      if (responseFormat == "b64_json") {
-        data = (
-          await Promise.all(imageUrls.map((url) => util.fetchFileBASE64(url)))
-        ).map((b64) => ({ b64_json: b64 }));
-      } else {
-        data = imageUrls.map((url) => ({ url }));
+          let data: any[] = [];
+          if (responseFormat == "b64_json") {
+            data = (
+              await Promise.all(imageUrls.map((url) => util.fetchFileBASE64(url)))
+            ).map((b64) => ({ b64_json: b64 }));
+          } else {
+            data = imageUrls.map((url) => ({ url }));
+          }
+          return {
+            created: util.unixTimestamp(),
+            data,
+          };
+        } catch (err: any) {
+          lastErr = err;
+          if (source === 'pool') {
+            if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+              await markTokenInvalid(token);
+              continue;
+            }
+          }
+          throw err;
+        }
       }
-      return {
-        created: util.unixTimestamp(),
-        data,
-      };
+      throw lastErr;
+
     },
 
     "/compositions": async (request: Request) => {
@@ -189,8 +191,6 @@ export default {
         );
       }
 
-      const { token, source } = await resolveTokenFromRequest(request.headers);
-
       const {
         model,
         prompt,
@@ -216,48 +216,52 @@ export default {
 
       const responseFormat = _.defaultTo(response_format, "url");
 
-      let resultUrls: string[];
-      try {
-        resultUrls = await generateImageComposition(
-          finalModel,
-          prompt,
-          images,
-          {
-            ratio,
-            resolution,
-            sampleStrength: finalSampleStrength,
-            negativePrompt,
-            intelligentRatio: finalIntelligentRatio,
-          },
-          token
-        );
-      } catch (err: any) {
-        if (source === 'pool') {
-          if (isNoCreditsError(err)) {
-            await markTokenInvalid(token);
+      let lastErr: any;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const { token, source } = await resolveTokenFromRequest(request.headers);
+        try {
+          const resultUrls = await generateImageComposition(
+            finalModel,
+            prompt,
+            images,
+            {
+              ratio,
+              resolution,
+              sampleStrength: finalSampleStrength,
+              negativePrompt,
+              intelligentRatio: finalIntelligentRatio,
+            },
+            token
+          );
+
+          let data: any[] = [];
+          if (responseFormat == "b64_json") {
+            data = (
+              await Promise.all(resultUrls.map((url) => util.fetchFileBASE64(url)))
+            ).map((b64) => ({ b64_json: b64 }));
+          } else {
+            data = resultUrls.map((url) => ({ url }));
           }
-          if (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
-            await markTokenInvalid(token);
+
+          return {
+            created: util.unixTimestamp(),
+            data,
+            input_images: images.length,
+            composition_type: "multi_image_synthesis",
+          };
+        } catch (err: any) {
+          lastErr = err;
+          if (source === 'pool') {
+            if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+              await markTokenInvalid(token);
+              continue;
+            }
           }
+          throw err;
         }
-        throw err;
       }
+      throw lastErr;
 
-      let data: any[] = [];
-      if (responseFormat == "b64_json") {
-        data = (
-          await Promise.all(resultUrls.map((url) => util.fetchFileBASE64(url)))
-        ).map((b64) => ({ b64_json: b64 }));
-      } else {
-        data = resultUrls.map((url) => ({ url }));
-      }
-
-      return {
-        created: util.unixTimestamp(),
-        data,
-        input_images: images.length,
-        composition_type: "multi_image_synthesis",
-      };
     },
   },
 };

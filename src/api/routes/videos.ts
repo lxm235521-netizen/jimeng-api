@@ -143,8 +143,6 @@ export default {
                 }
             }
 
-            const { token, source } = await resolveTokenFromRequest(request.headers);
-
             const {
                 model = DEFAULT_MODEL,
                 prompt,
@@ -164,56 +162,56 @@ export default {
             // 兼容两种参数名格式：file_paths 和 filePaths
             const finalFilePaths = filePaths.length > 0 ? filePaths : file_paths;
 
-            // 生成视频
-            let generatedVideoUrl: string;
-            try {
-                generatedVideoUrl = await generateVideo(
-                    model,
-                    prompt,
-                    {
-                        ratio,
-                        resolution,
-                        duration: finalDuration,
-                        filePaths: finalFilePaths,
-                        files: request.files, // 传递上传的文件
-                        httpRequest: request, // 传递完整的 request 对象以访问动态字段
-                        functionMode,
-                    },
-                    token
-                );
-            } catch (err: any) {
-                if (source === 'pool') {
-                    if (isNoCreditsError(err)) {
-                        await markTokenInvalid(token);
-                    }
-                    if (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES)) {
-                        await markTokenInvalid(token);
-                    }
-                }
-                throw err;
-            }
+            // Token 池自动重试：1006/登录失效 -> 标记不可用并换下一个 token
+            let lastErr: any;
+            for (let attempt = 0; attempt < 5; attempt++) {
+                const { token, source } = await resolveTokenFromRequest(request.headers);
+                try {
+                    const generatedVideoUrl = await generateVideo(
+                        model,
+                        prompt,
+                        {
+                            ratio,
+                            resolution,
+                            duration: finalDuration,
+                            filePaths: finalFilePaths,
+                            files: request.files, // 传递上传的文件
+                            httpRequest: request, // 传递完整的 request 对象以访问动态字段
+                            functionMode,
+                        },
+                        token
+                    );
 
-            // 根据response_format返回不同格式的结果
-            if (response_format === "b64_json") {
-                // 获取视频内容并转换为BASE64
-                const videoBase64 = await util.fetchFileBASE64(generatedVideoUrl);
-                return {
-                    created: util.unixTimestamp(),
-                    data: [{
-                        b64_json: videoBase64,
-                        revised_prompt: prompt
-                    }]
-                };
-            } else {
-                // 默认返回URL
-                return {
-                    created: util.unixTimestamp(),
-                    data: [{
-                        url: generatedVideoUrl,
-                        revised_prompt: prompt
-                    }]
-                };
+                    // 根据response_format返回不同格式的结果
+                    if (response_format === "b64_json") {
+                        const videoBase64 = await util.fetchFileBASE64(generatedVideoUrl);
+                        return {
+                            created: util.unixTimestamp(),
+                            data: [{
+                                b64_json: videoBase64,
+                                revised_prompt: prompt
+                            }]
+                        };
+                    }
+                    return {
+                        created: util.unixTimestamp(),
+                        data: [{
+                            url: generatedVideoUrl,
+                            revised_prompt: prompt
+                        }]
+                    };
+                } catch (err: any) {
+                    lastErr = err;
+                    if (source === 'pool') {
+                        if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+                            await markTokenInvalid(token);
+                            continue;
+                        }
+                    }
+                    throw err;
+                }
             }
+            throw lastErr;
         }
 
     }
