@@ -12,8 +12,15 @@ import EX from '@/api/consts/exceptions.ts';
 import { submitTask } from '@/lib/task-runner.ts';
 
 function isNoCreditsError(err: any): boolean {
-    const msg = String(err?.errmsg || err?.message || '');
-    return msg.includes('(错误码: 1006)') || msg.includes('错误码: 1006') || msg.includes('1006');
+    const msg = String(err?.errmsg || err?.message || '').toLowerCase();
+    // ⚠️ Cloudflare 也有 1006（Access denied），不能仅凭 “1006” 就判定积分不足
+    const has1006 = msg.includes('1006') || msg.includes('错误码: 1006') || msg.includes('(错误码: 1006)');
+    const looksLikeNoCredit =
+        msg.includes('not enough credits') ||
+        msg.includes('no relevant benefits') ||
+        msg.includes('积分不足') ||
+        msg.includes('无积分');
+    return has1006 && looksLikeNoCredit;
 }
 
 function normalizeNode(v: any): 'cn' | 'us' | 'jp' | 'hk' | 'sg' | undefined {

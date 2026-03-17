@@ -54,6 +54,8 @@ _default_params = {
     'retry_count': 3,
 
     # Jimeng(OpenAI兼容) - 走 NewAPI 域名
+    'jimeng_image_model': 'jimeng-4.5',
+    'jimeng_video_model': 'jimeng-video-3.5-pro',
     'jimeng_poll_interval': 2,
 }
 
@@ -64,13 +66,9 @@ AVAILABLE_MODELS = [
     'grok-imagine-1.0',       # Grok 图像生成
     'grok-imagine-1.0-edit',  # Grok 图像编辑
 
-    # Jimeng（JP 节点支持，见 README.CN.md）
-    'jimeng-5.0',
-    'jimeng-4.6',
-    'jimeng-4.5',
-    'jimeng-4.1',
-    'jimeng-4.0',
-    'jimeng-3.0',
+    # Jimeng（通过 NewAPI / OpenAI 兼容接口）
+    'jimeng-image',
+    'jimeng-video',
 ]
 
 # 供用户选择的比例和分辨率
@@ -449,7 +447,6 @@ def _jm_headers(api_key: str):
     return {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         # 固定日本节点（依赖你的 NewAPI/反代放行这些头）
         "X-Token-Node": "jp",
         "X-From-NewAPI": "1",
@@ -472,6 +469,7 @@ def _poll_task_result(base_url: str, api_key: str, task_id: str, timeout: int, p
             raise Exception(f"任务查询网络异常: {str(e)}")
 
         if not resp or resp.status_code != 200:
+            # 查询接口偶发波动时继续轮询
             now = time.time()
             if now - last_print >= poll_interval:
                 print("生成中..")
@@ -494,6 +492,7 @@ def _poll_task_result(base_url: str, api_key: str, task_id: str, timeout: int, p
         if status == "succeeded":
             return data.get("result")
 
+        # 兜底：未知状态也继续轮询
         now = time.time()
         if now - last_print >= poll_interval:
             print("生成中..")
@@ -501,11 +500,11 @@ def _poll_task_result(base_url: str, api_key: str, task_id: str, timeout: int, p
         time.sleep(poll_interval)
 
 
-def send_jimeng_image_request(api_key: str, model: str, prompt: str, aspect_ratio: str, image_size: str, timeout: int):
+def send_jimeng_image_request(api_key: str, prompt: str, aspect_ratio: str, image_size: str, timeout: int):
     base_url = GROK_BASE_URL
     url = f"{base_url.rstrip('/')}/v1/images/generations"
     payload = {
-        "model": model,
+        "model": _global_params.get("jimeng_image_model", "jimeng-4.5"),
         "prompt": prompt,
         "ratio": aspect_ratio,
         "resolution": image_size.lower(),
@@ -520,13 +519,44 @@ def send_jimeng_image_request(api_key: str, model: str, prompt: str, aspect_rati
     if not task_id:
         raise Exception(f"Jimeng 图片提交返回异常: {str(j)[:200]}")
 
-    return _poll_task_result(
+    result = _poll_task_result(
         base_url=base_url,
         api_key=api_key,
         task_id=task_id,
         timeout=timeout,
         poll_interval=int(_global_params.get("jimeng_poll_interval", 2)),
     )
+    return result
+
+
+def send_jimeng_video_request(api_key: str, prompt: str, aspect_ratio: str, resolution: str, timeout: int):
+    base_url = GROK_BASE_URL
+    url = f"{base_url.rstrip('/')}/v1/videos/generations"
+    payload = {
+        "model": _global_params.get("jimeng_video_model", "jimeng-video-3.5-pro"),
+        "prompt": prompt,
+        "ratio": aspect_ratio,
+        "resolution": resolution.lower(),
+        "duration": 5,
+        "response_format": "url",
+        "async": True,
+    }
+    resp = requests.post(url, json=payload, headers=_jm_headers(api_key), timeout=timeout)
+    if resp.status_code != 200:
+        raise Exception(f"Jimeng 视频提交失败 {resp.status_code}: {resp.text[:200]}")
+    j = resp.json()
+    task_id = j.get("task_id")
+    if not task_id:
+        raise Exception(f"Jimeng 视频提交返回异常: {str(j)[:200]}")
+
+    result = _poll_task_result(
+        base_url=base_url,
+        api_key=api_key,
+        task_id=task_id,
+        timeout=timeout,
+        poll_interval=int(_global_params.get("jimeng_poll_interval", 2)),
+    )
+    return result
 
 
 # ==========================================
@@ -643,10 +673,11 @@ def generate(context):
         return []
 
     # === 模型拼接与判断逻辑 ===
-    is_jimeng_image = (isinstance(base_model, str) and base_model.startswith('jimeng-') and (not base_model.startswith('jimeng-video-')))
+    is_jimeng_image = (base_model == 'jimeng-image')
+    is_jimeng_video = (base_model == 'jimeng-video')
     is_grok = base_model.startswith('grok')
     
-    if is_jimeng_image:
+    if is_jimeng_image or is_jimeng_video:
         target_model = base_model
     elif is_grok:
         target_model = base_model
@@ -667,14 +698,15 @@ def generate(context):
             
             # === 分流处理 ===
             if is_jimeng_image:
-                result = send_jimeng_image_request(api_key, base_model, prompt, aspect_ratio, image_size, req_timeout)
+                result = send_jimeng_image_request(api_key, prompt, aspect_ratio, image_size, req_timeout)
+                # 期望 result 结构：{created, data:[{b64_json|url}, ...]}
                 items = (result or {}).get("data") or []
                 if not items:
                     raise Exception("Jimeng 未返回图片数据")
 
                 viewer_index = context.get('viewer_index', 0)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                safe_model_name = (base_model or "jimeng-4.5").replace('.', '-')
+                safe_model_name = (_global_params.get("jimeng_image_model", "jimeng-4.5") or "jimeng-4.5").replace('.', '-')
 
                 for idx, it in enumerate(items):
                     b64_image = it.get("b64_json")
@@ -682,15 +714,12 @@ def generate(context):
                         b64_image = download_image(it.get("url"))
                     if not b64_image:
                         continue
-
-                    if ',' in b64_image and b64_image.startswith('data:'):
+                    if ',' in b64_image and str(b64_image).startswith('data:'):
                         b64_image = b64_image.split(',', 1)[1]
-
                     image_data = base64.b64decode(b64_image)
                     img = Image.open(BytesIO(image_data))
                     if img.mode not in ('RGB', 'RGBA'):
                         img = img.convert('RGBA')
-
                     filename = f"{viewer_index:04d}_{safe_model_name}_{timestamp}_{idx+1}.png"
                     output_path = os.path.join(output_dir, filename)
                     img.save(output_path, 'PNG')
@@ -699,6 +728,37 @@ def generate(context):
 
                 if not generated_files:
                     raise Exception("Jimeng 返回项中没有可保存的图片")
+                break
+
+            if is_jimeng_video:
+                result = send_jimeng_video_request(api_key, prompt, aspect_ratio, image_size, req_timeout)
+                items = (result or {}).get("data") or []
+                if not items:
+                    raise Exception("Jimeng 未返回视频数据")
+                url = items[0].get("url")
+                if not url:
+                    raise Exception("Jimeng 视频结果缺少 url")
+
+                viewer_index = context.get('viewer_index', 0)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                safe_model_name = (_global_params.get("jimeng_video_model", "jimeng-video-3.5-pro") or "jimeng-video-3.5-pro").replace('.', '-')
+                filename = f"{viewer_index:04d}_{safe_model_name}_{timestamp}.mp4"
+                output_path = os.path.join(output_dir, filename)
+
+                # 下载视频
+                try:
+                    resp = requests.get(url, timeout=int(_global_params.get('download_timeout', 120)), stream=True)
+                    if resp.status_code != 200:
+                        raise Exception(f"下载失败 HTTP Code: {resp.status_code}")
+                    with open(output_path, "wb") as f:
+                        for chunk in resp.iter_content(chunk_size=1024 * 256):
+                            if chunk:
+                                f.write(chunk)
+                except Exception as e:
+                    raise Exception(f"视频下载异常: {str(e)}")
+
+                generated_files.append(output_path)
+                print(f"✓ 生成成功: {output_path}")
                 break
 
             if is_grok:

@@ -50,6 +50,19 @@ _default_params = {
     'jimeng_poll_interval': 2,
 }
 
+JIMENG_VIDEO_MODELS_JP = [
+    # JP 节点支持（见 README.CN.md），不包含仅国内站的 seedance
+    'jimeng-video-3.5-pro',
+    'jimeng-video-veo3',
+    'jimeng-video-veo3.1',
+    'jimeng-video-sora2',
+    'jimeng-video-3.0-pro',
+    'jimeng-video-3.0',
+    'jimeng-video-3.0-fast',
+    'jimeng-video-2.0-pro',
+    'jimeng-video-2.0',
+]
+
 # 全局参数存储
 _global_params = _default_params.copy()
 _global_params.update(load_plugin_config(_PLUGIN_FILE))
@@ -151,6 +164,24 @@ class PluginUI:
         duration_layout.addWidget(duration_label)
         duration_layout.addWidget(self.widgets['duration'])
         layout.addLayout(duration_layout)
+
+        # Jimeng 视频模型（仅在选择 jimeng 时生效）
+        jm_model_layout = QHBoxLayout()
+        jm_model_label = QLabel("即梦模型:")
+        jm_model_label.setFixedWidth(100)
+        jm_model_label.setFont(QFont("Microsoft YaHei", 9))
+        jm_model_label.setStyleSheet("color: #CCCCCC;")
+
+        self.widgets['jimeng_video_model'] = NoWheelComboBox()
+        self.widgets['jimeng_video_model'].addItems(JIMENG_VIDEO_MODELS_JP)
+        self.widgets['jimeng_video_model'].setCurrentText(_global_params.get('jimeng_video_model', 'jimeng-video-3.5-pro'))
+        self.widgets['jimeng_video_model'].setFont(QFont("Microsoft YaHei", 9))
+        self.widgets['jimeng_video_model'].setFixedHeight(32)
+        self.widgets['jimeng_video_model'].currentTextChanged.connect(lambda text: self._update_param('jimeng_video_model', text))
+
+        jm_model_layout.addWidget(jm_model_label)
+        jm_model_layout.addWidget(self.widgets['jimeng_video_model'])
+        layout.addLayout(jm_model_layout)
         
         # 生成模式选择
         mode_layout = QHBoxLayout()
@@ -232,11 +263,13 @@ def _force_sync_params_from_ui():
     updated = False
     
     param_map = {
+        'model': 'combo',
         'api_key': 'text',
         'aspect_ratio': 'combo',
         'duration': 'combo',
         'generation_mode': 'combo',
-        'timeout': 'spin'
+        'jimeng_video_model': 'combo',
+        'timeout': 'spin',
     }
 
     for key, type_ in param_map.items():
@@ -274,6 +307,7 @@ def _jm_headers(api_key: str):
     return {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         # 固定日本节点（依赖你的 NewAPI/反代放行这些头）
         "X-Token-Node": "jp",
         "X-From-NewAPI": "1",
@@ -331,14 +365,41 @@ def _poll_task_result(base_url: str, api_key: str, task_id: str, timeout: int, p
         time.sleep(poll_interval)
 
 
-def send_jimeng_video_request(base_url: str, api_key: str, prompt: str, ratio: str, duration: int, timeout: int, progress_callback=None):
+def _normalize_jimeng_duration(model: str, duration: int) -> int:
+    m = str(model or '').lower()
+    if 'veo3.1' in m or 'veo3' in m:
+        return 8
+    if 'sora2' in m:
+        return duration if duration in (4, 8, 12) else 4
+    if '3.5-pro' in m or '3.5_pro' in m:
+        return duration if duration in (5, 10, 12) else 5
+    if 'seedance-2.0' in m or 'seedance' in m:
+        # JP 不支持该模型，这里仅兜底
+        if duration < 4: return 4
+        if duration > 15: return 15
+        return int(duration)
+    # 其他：5/10
+    return duration if duration in (5, 10) else 5
+
+
+def _normalize_jimeng_resolution(model: str, resolution: str) -> str:
+    m = str(model or '').lower()
+    res = str(resolution or '720p').lower()
+    if ('jimeng-video-3.0' in m) or ('jimeng-video-3.0-fast' in m):
+        return res if res in ('720p', '1080p') else '720p'
+    return '720p'
+
+
+def send_jimeng_video_request(base_url: str, api_key: str, model: str, prompt: str, ratio: str, duration: int, resolution: str, timeout: int, progress_callback=None):
     url = f"{base_url.rstrip('/')}/v1/videos/generations"
+    final_duration = _normalize_jimeng_duration(model, int(duration))
+    final_resolution = _normalize_jimeng_resolution(model, resolution)
     payload = {
-        "model": _global_params.get("jimeng_video_model", "jimeng-video-3.5-pro"),
+        "model": model,
         "prompt": prompt,
         "ratio": ratio,
-        "resolution": "720p",
-        "duration": duration,
+        "resolution": final_resolution,
+        "duration": final_duration,
         "response_format": "url",
         "async": True,
     }
@@ -438,6 +499,7 @@ def generate(context):
     # Jimeng：走标准 OpenAI 路径 + async=true -> 轮询 /v1/tasks/{id}
     if provider == 'jimeng':
         base_url = plugin_params.get('jimeng_base_url', 'https://api.mmg.lat')
+        jm_model = plugin_params.get('jimeng_video_model', _global_params.get('jimeng_video_model', 'jimeng-video-3.5-pro'))
         try:
             if progress_callback:
                 progress_callback("提交任务...", 1)
@@ -455,9 +517,11 @@ def generate(context):
             result = send_jimeng_video_request(
                 base_url=base_url,
                 api_key=api_key,
+                model=jm_model,
                 prompt=prompt,
                 ratio=aspect_ratio,
                 duration=duration_int,
+                resolution='720p',
                 timeout=timeout,
                 progress_callback=progress_callback,
             )
@@ -473,7 +537,7 @@ def generate(context):
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             idx = context.get('viewer_index', 0)
-            safe_model_name = (_global_params.get("jimeng_video_model", "jimeng-video-3.5-pro") or "jimeng-video-3.5-pro").replace('.', '-')
+            safe_model_name = (jm_model or "jimeng-video-3.5-pro").replace('.', '-')
             filename = f"{idx:04d}_{safe_model_name}_{timestamp}.mp4"
             output_path = os.path.join(output_dir, filename)
 
