@@ -5,6 +5,7 @@ import token from './token.js';
 import models from './models.ts';
 import videos from './videos.ts';
 import tasks from './tasks.ts';
+import chat from './chat.ts';
 import admin from './admin.ts';
 import adminMe from './admin-me.ts';
 import adminTokens from './admin-tokens.ts';
@@ -39,6 +40,7 @@ export default [
     models,
     videos,
     tasks,
+    chat,
     admin,
     adminMe,
     adminTokens

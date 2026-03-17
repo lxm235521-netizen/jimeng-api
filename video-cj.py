@@ -512,43 +512,39 @@ def send_jimeng_video_request(
     first_frame_path: str = None,
     last_frame_path: str = None,
 ):
-    url = f"{base_url.rstrip('/')}/v1/videos/generations"
+    # 走 chat/completions 触发任务（NewAPI 可计费）
+    url = f"{base_url.rstrip('/')}/v1/chat/completions"
     final_duration = _normalize_jimeng_duration(model, int(duration))
     final_resolution = _normalize_jimeng_resolution(model, resolution)
+    content_list = []
+    if first_frame_path and os.path.exists(first_frame_path):
+        b64 = encode_image_to_base64(first_frame_path)
+        if b64:
+            ext = os.path.splitext(first_frame_path)[1].lower()
+            mime_type = "image/png" if ext == '.png' else "image/jpeg"
+            content_list.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}})
+    if last_frame_path and os.path.exists(last_frame_path):
+        b64 = encode_image_to_base64(last_frame_path)
+        if b64:
+            ext = os.path.splitext(last_frame_path)[1].lower()
+            mime_type = "image/png" if ext == '.png' else "image/jpeg"
+            content_list.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}})
+
+    content_list.append({"type": "text", "text": prompt})
     payload = {
         "model": model,
-        "prompt": prompt,
+        "messages": [{"role": "user", "content": content_list}],
         "ratio": ratio,
         "resolution": final_resolution,
         "duration": final_duration,
-        "response_format": "url",
-        "async": True,
+        "functionMode": "first_last_frames",
     }
 
-    files = None
-    if first_frame_path and os.path.exists(first_frame_path):
-        files = files or {}
-        files["image_file_1"] = (os.path.basename(first_frame_path), open(first_frame_path, "rb"), "image/png")
-    if last_frame_path and os.path.exists(last_frame_path):
-        files = files or {}
-        files["image_file_2"] = (os.path.basename(last_frame_path), open(last_frame_path, "rb"), "image/png")
-
-    try:
-        if files:
-            resp = requests.post(url, data=payload, files=files, headers=_jm_headers(api_key, is_multipart=True), timeout=timeout)
-        else:
-            resp = requests.post(url, json=payload, headers=_jm_headers(api_key), timeout=timeout)
-    finally:
-        if files:
-            for _, v in files.items():
-                try:
-                    v[1].close()
-                except Exception:
-                    pass
+    resp = requests.post(url, json=payload, headers=_jm_headers(api_key), timeout=timeout)
     if resp.status_code != 200:
         raise Exception(f"Jimeng 视频提交失败 {resp.status_code}: {resp.text[:200]}")
     j = resp.json()
-    task_id = j.get("task_id")
+    task_id = j.get("task_id") or (j.get("task") or {}).get("task_id")
     if not task_id:
         raise Exception(f"Jimeng 视频提交返回异常: {str(j)[:200]}")
 
