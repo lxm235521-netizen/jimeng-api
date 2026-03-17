@@ -23,6 +23,13 @@ function normalizeNode(v: any): 'cn' | 'us' | 'jp' | 'hk' | 'sg' | undefined {
   return undefined;
 }
 
+function parseAsyncFlag(v: any): boolean {
+  if (_.isBoolean(v)) return v;
+  if (_.isString(v)) return v.trim().toLowerCase() === 'true' || v.trim() === '1';
+  if (_.isFinite(v)) return Number(v) === 1;
+  return false;
+}
+
 export default {
   prefix: "/v1/images",
 
@@ -48,7 +55,8 @@ export default {
         .validate("body.resolution", (v) => _.isUndefined(v) || _.isString(v))
         .validate("body.intelligent_ratio", (v) => _.isUndefined(v) || _.isBoolean(v))
         .validate("body.sample_strength", (v) => _.isUndefined(v) || _.isFinite(v))
-        .validate("body.response_format", (v) => _.isUndefined(v) || _.isString(v));
+        .validate("body.response_format", (v) => _.isUndefined(v) || _.isString(v))
+        .validate("body.async", (v) => _.isUndefined(v) || _.isBoolean(v) || _.isString(v) || _.isFinite(v));
 
       const {
         model,
@@ -59,10 +67,73 @@ export default {
         intelligent_ratio: intelligentRatio,
         sample_strength: sampleStrength,
         response_format,
+        async,
       } = request.body;
       const finalModel = _.defaultTo(model, DEFAULT_IMAGE_MODEL);
 
       const responseFormat = _.defaultTo(response_format, "url");
+
+      // async=true：创建任务并立即返回 task_id（用于对接 NewAPI 计费 + Cloudflare 100s 超时限制）
+      const asyncMode = parseAsyncFlag(async);
+      if (asyncMode) {
+        const node = normalizeNode(request.headers?.['x-token-node'] || request.headers?.['X-Token-Node']);
+        const payload = { ...request.body };
+        const task = await submitTask({
+          type: 'image',
+          node,
+          ttlMs: 8 * 60 * 1000,
+          payload: { kind: 'generations', body: payload },
+          run: async () => {
+            const { generateImages } = await import('@/api/controllers/images.ts');
+            const { resolveTokenFromRequest, markTokenInvalid } = await import('@/lib/token-picker.ts');
+
+            const {
+              model,
+              prompt,
+              negative_prompt: negativePrompt,
+              ratio,
+              resolution,
+              intelligent_ratio: intelligentRatio,
+              sample_strength: sampleStrength,
+              response_format,
+            } = payload as any;
+
+            const finalModel = _.defaultTo(model, DEFAULT_IMAGE_MODEL);
+            const responseFormat = _.defaultTo(response_format, "url");
+
+            let lastErr: any;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const picked = await resolveTokenFromRequest({ 'X-Token-Node': node });
+              try {
+                const imageUrls = await generateImages(
+                  finalModel,
+                  prompt,
+                  { ratio, resolution, sampleStrength, negativePrompt, intelligentRatio },
+                  picked.token
+                );
+                let data: any[] = [];
+                if (responseFormat == "b64_json") {
+                  data = (await Promise.all(imageUrls.map((url) => util.fetchFileBASE64(url)))).map((b64) => ({ b64_json: b64 }));
+                } else {
+                  data = imageUrls.map((url) => ({ url }));
+                }
+                return { created: util.unixTimestamp(), data };
+              } catch (err: any) {
+                lastErr = err;
+                if (picked.source === 'pool') {
+                  if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+                    await markTokenInvalid(picked.token);
+                    continue;
+                  }
+                }
+                throw err;
+              }
+            }
+            throw lastErr;
+          },
+        });
+        return { created: util.unixTimestamp(), task_id: task.id, status: 'processing' };
+      }
 
       // Token 池自动重试：
       // - 积分不足（1006）或 token 失效：将该 token 标记为不可用并换下一个重试
