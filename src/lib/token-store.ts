@@ -267,6 +267,12 @@ export async function pickValidToken(
 
     if (candidates.length === 0) return null;
 
+    // 如果已缓存过积分信息，优先从“已知有积分”的 token 中挑选，避免频繁命中无积分 token
+    const withCredit = candidates.filter((t) => _.isFinite(t.credit_total as any) && Number(t.credit_total) > 0);
+    if (withCredit.length > 0) {
+      candidates = withCredit;
+    }
+
     if (strategy === 'random') {
       return _.sample(candidates) as TokenRecord;
     }

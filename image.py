@@ -46,7 +46,9 @@ GROK_BASE_URL = 'https://api.mmg.lat'
 
 _default_params = {
     'api_key': '',
-    'model': 'nanobanana2',  # 基础模型名
+    # 双下拉：模型类别 + 模型细项
+    'model_category': 'nanobanana',
+    'model_name': 'nanobanana2',
     'aspect_ratio': '16:9',
     'image_size': '2K',      # 分辨率选项
     'request_timeout': 300, 
@@ -54,23 +56,28 @@ _default_params = {
     'retry_count': 3,
 
     # Jimeng(OpenAI兼容) - 走 NewAPI 域名
-    'jimeng_poll_interval': 2,
+    'jimeng_poll_interval': 10,
 }
 
-# 供用户选择的基础模型
-AVAILABLE_MODELS = [
-    'nanobanana2',
-    'nanobananapro',
-    'grok-imagine-1.0',       # Grok 图像生成
-    'grok-imagine-1.0-edit',  # Grok 图像编辑
+MODEL_CATEGORIES = ['jimeng', 'grok', 'nanobanana']
 
-    # Jimeng（JP 节点支持，见 README.CN.md）
+JIMENG_IMAGE_MODELS_JP = [
     'jimeng-5.0',
     'jimeng-4.6',
     'jimeng-4.5',
     'jimeng-4.1',
     'jimeng-4.0',
     'jimeng-3.0',
+]
+
+GROK_IMAGE_MODELS = [
+    'grok-imagine-1.0',
+    'grok-imagine-1.0-edit',
+]
+
+NANOBANANA_MODELS = [
+    'nanobanana2',
+    'nanobananapro',
 ]
 
 # 供用户选择的比例和分辨率
@@ -149,26 +156,43 @@ class PluginUI:
         api_key_layout.addWidget(self.widgets['api_key'])
         layout.addLayout(api_key_layout)
         
-        # 2. 基础模型选择
+        # 2. 模型类别
+        cat_layout = QHBoxLayout()
+        cat_label = QLabel("模型类别:")
+        cat_label.setFixedWidth(100)
+        cat_label.setFont(font_yahei)
+        cat_label.setStyleSheet(label_color)
+
+        self.widgets['model_category'] = NoWheelComboBox()
+        self.widgets['model_category'].addItems(MODEL_CATEGORIES)
+        self.widgets['model_category'].setCurrentText(_global_params.get('model_category', 'nanobanana'))
+        self.widgets['model_category'].setFont(font_yahei)
+        self.widgets['model_category'].setFixedHeight(32)
+        self.widgets['model_category'].setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.widgets['model_category'].setStyleSheet(input_style.replace('QWidget', 'QComboBox'))
+
+        cat_layout.addWidget(cat_label)
+        cat_layout.addWidget(self.widgets['model_category'])
+        layout.addLayout(cat_layout)
+
+        # 3. 模型选择（细项）
         model_layout = QHBoxLayout()
-        model_label = QLabel("基础模型:")
+        model_label = QLabel("模型选择:")
         model_label.setFixedWidth(100)
         model_label.setFont(font_yahei)
         model_label.setStyleSheet(label_color)
         
-        self.widgets['model'] = NoWheelComboBox()
-        self.widgets['model'].addItems(AVAILABLE_MODELS)
-        self.widgets['model'].setCurrentText(_global_params.get('model', 'nanobanana2'))
-        self.widgets['model'].setFont(font_yahei)
-        self.widgets['model'].setFixedHeight(32)
-        self.widgets['model'].setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.widgets['model'].setStyleSheet(input_style.replace('QWidget', 'QComboBox'))
+        self.widgets['model_name'] = NoWheelComboBox()
+        self.widgets['model_name'].setFont(font_yahei)
+        self.widgets['model_name'].setFixedHeight(32)
+        self.widgets['model_name'].setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.widgets['model_name'].setStyleSheet(input_style.replace('QWidget', 'QComboBox'))
         
         model_layout.addWidget(model_label)
-        model_layout.addWidget(self.widgets['model'])
+        model_layout.addWidget(self.widgets['model_name'])
         layout.addLayout(model_layout)
         
-        # 3. 图片比例
+        # 4. 图片比例
         ratio_layout = QHBoxLayout()
         ratio_label = QLabel("图片比例:")
         ratio_label.setFixedWidth(100)
@@ -186,7 +210,7 @@ class PluginUI:
         ratio_layout.addWidget(self.widgets['aspect_ratio'])
         layout.addLayout(ratio_layout)
 
-        # 4. 分辨率
+        # 5. 分辨率
         self.size_layout = QHBoxLayout()
         self.size_label = QLabel("分辨率:")
         self.size_label.setFixedWidth(100)
@@ -206,7 +230,7 @@ class PluginUI:
         self.size_layout.addWidget(self.widgets['image_size'])
         layout.addLayout(self.size_layout)
 
-        # 5. 请求超时
+        # 6. 请求超时
         req_timeout_layout = QHBoxLayout()
         req_label = QLabel("请求超时(秒):")
         req_label.setFixedWidth(100)
@@ -227,7 +251,7 @@ class PluginUI:
         req_timeout_layout.addWidget(self.widgets['request_timeout'])
         layout.addLayout(req_timeout_layout)
         
-        # 6. 下载超时
+        # 7. 下载超时
         dl_timeout_layout = QHBoxLayout()
         dl_label = QLabel("下载超时(秒):")
         dl_label.setFixedWidth(100)
@@ -248,7 +272,7 @@ class PluginUI:
         dl_timeout_layout.addWidget(self.widgets['download_timeout'])
         layout.addLayout(dl_timeout_layout)
 
-        # 7. 重试次数
+        # 8. 重试次数
         retry_layout = QHBoxLayout()
         retry_label = QLabel("重试次数:")
         retry_label.setFixedWidth(100)
@@ -269,16 +293,39 @@ class PluginUI:
         retry_layout.addWidget(self.widgets['retry_count'])
         layout.addLayout(retry_layout)
 
-        # 绑定模型切换事件 (UI 联动)
-        self.widgets['model'].currentTextChanged.connect(self._on_model_changed)
-        
+        # 绑定联动事件
+        self.widgets['model_category'].currentTextChanged.connect(self._on_category_changed)
+        self.widgets['model_name'].currentTextChanged.connect(lambda text: self._update_param('model_name', text))
+
         # 初始化触发一次，确保显示状态正确
-        self._on_model_changed(self.widgets['model'].currentText())
+        self._on_category_changed(self.widgets['model_category'].currentText())
 
         return container
     
-    def _on_model_changed(self, model_name):
-        self._update_param('model', model_name)
+    def _set_model_name_items(self, category: str):
+        self.widgets['model_name'].blockSignals(True)
+        self.widgets['model_name'].clear()
+        items = []
+        if category == 'jimeng':
+            items = JIMENG_IMAGE_MODELS_JP
+        elif category == 'grok':
+            items = GROK_IMAGE_MODELS
+        else:
+            items = NANOBANANA_MODELS
+        self.widgets['model_name'].addItems(items)
+
+        saved = _global_params.get('model_name')
+        if isinstance(saved, str) and saved in items:
+            self.widgets['model_name'].setCurrentText(saved)
+        else:
+            # 默认值
+            self.widgets['model_name'].setCurrentText(items[0] if items else '')
+        self.widgets['model_name'].blockSignals(False)
+        self._update_param('model_name', self.widgets['model_name'].currentText())
+
+    def _on_category_changed(self, category: str):
+        self._update_param('model_category', category)
+        self._set_model_name_items(category)
         
         # 记录当前选择的比例
         current_ratio = self.widgets['aspect_ratio'].currentText() or _global_params.get('aspect_ratio', '16:9')
@@ -287,7 +334,7 @@ class PluginUI:
         self.widgets['aspect_ratio'].blockSignals(True)
         self.widgets['aspect_ratio'].clear()
         
-        if model_name.startswith('grok'):
+        if category == 'grok':
             # Grok 模型：更新比例列表并隐藏分辨率
             self.widgets['aspect_ratio'].addItems(GROK_ASPECT_RATIOS)
             if current_ratio in GROK_ASPECT_RATIOS:
@@ -320,7 +367,8 @@ class PluginUI:
         global _global_params
         _global_params.update(params)
         if 'api_key' in self.widgets: self.widgets['api_key'].setText(str(params.get('api_key', '')))
-        if 'model' in self.widgets: self.widgets['model'].setCurrentText(str(params.get('model', 'nanobanana2')))
+        if 'model_category' in self.widgets: self.widgets['model_category'].setCurrentText(str(params.get('model_category', 'nanobanana')))
+        if 'model_name' in self.widgets: self.widgets['model_name'].setCurrentText(str(params.get('model_name', 'nanobanana2')))
         if 'image_size' in self.widgets: self.widgets['image_size'].setCurrentText(str(params.get('image_size', '2K')))
         if 'request_timeout' in self.widgets: self.widgets['request_timeout'].setValue(int(params.get('request_timeout', 300)))
         if 'download_timeout' in self.widgets: self.widgets['download_timeout'].setValue(int(params.get('download_timeout', 120)))
@@ -345,7 +393,8 @@ def _force_sync_params_from_ui():
     if not _plugin_ui: return
     w = _plugin_ui.widgets
     if 'api_key' in w: _global_params['api_key'] = w['api_key'].text()
-    if 'model' in w: _global_params['model'] = w['model'].currentText()
+    if 'model_category' in w: _global_params['model_category'] = w['model_category'].currentText()
+    if 'model_name' in w: _global_params['model_name'] = w['model_name'].currentText()
     if 'aspect_ratio' in w: _global_params['aspect_ratio'] = w['aspect_ratio'].currentText()
     if 'image_size' in w: _global_params['image_size'] = w['image_size'].currentText()
     if 'request_timeout' in w: _global_params['request_timeout'] = w['request_timeout'].value()
@@ -632,7 +681,8 @@ def generate(context):
     output_dir = context.get('output_dir', '')
     
     api_key = _global_params.get('api_key', '')
-    base_model = _global_params.get('model', 'nanobanana2')
+    model_category = _global_params.get('model_category', 'nanobanana')
+    model_name = _global_params.get('model_name', 'nanobanana2')
     aspect_ratio = _global_params.get('aspect_ratio', '16:9')
     image_size = _global_params.get('image_size', '2K')
     req_timeout = int(_global_params.get('request_timeout', 300))
@@ -643,15 +693,17 @@ def generate(context):
         return []
 
     # === 模型拼接与判断逻辑 ===
-    is_jimeng_image = (isinstance(base_model, str) and base_model.startswith('jimeng-') and (not base_model.startswith('jimeng-video-')))
-    is_grok = base_model.startswith('grok')
+    is_jimeng_image = (model_category == 'jimeng')
+    is_grok = (model_category == 'grok')
+    is_nanobanana = (model_category == 'nanobanana')
     
     if is_jimeng_image:
-        target_model = base_model
+        target_model = model_name
     elif is_grok:
-        target_model = base_model
+        target_model = model_name
         grok_size_str = GROK_SIZE_MAP.get(aspect_ratio, '1280x720')
     else:
+        base_model = model_name
         model_prefix = "nanobanana-2" if base_model == "nanobanana2" else "nanobanana-pro"
         size_suffix = image_size.lower()
         target_model = f"{model_prefix}-{size_suffix}"
@@ -667,14 +719,14 @@ def generate(context):
             
             # === 分流处理 ===
             if is_jimeng_image:
-                result = send_jimeng_image_request(api_key, base_model, prompt, aspect_ratio, image_size, req_timeout)
+                result = send_jimeng_image_request(api_key, model_name, prompt, aspect_ratio, image_size, req_timeout)
                 items = (result or {}).get("data") or []
                 if not items:
                     raise Exception("Jimeng 未返回图片数据")
 
                 viewer_index = context.get('viewer_index', 0)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                safe_model_name = (base_model or "jimeng-4.5").replace('.', '-')
+                safe_model_name = (model_name or "jimeng-4.5").replace('.', '-')
 
                 for idx, it in enumerate(items):
                     b64_image = it.get("b64_json")
@@ -691,7 +743,8 @@ def generate(context):
                     if img.mode not in ('RGB', 'RGBA'):
                         img = img.convert('RGBA')
 
-                    filename = f"{viewer_index:04d}_{safe_model_name}_{timestamp}_{idx+1}.png"
+                    # 宿主软件可能按文件名前缀 viewer_index 放入固定槽位；多张图用递增 index 避免只显示一张
+                    filename = f"{(int(viewer_index) + idx):04d}_{safe_model_name}_{timestamp}.png"
                     output_path = os.path.join(output_dir, filename)
                     img.save(output_path, 'PNG')
                     generated_files.append(output_path)

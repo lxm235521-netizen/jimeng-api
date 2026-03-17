@@ -37,9 +37,12 @@ _PLUGIN_FILE = __file__
 _default_params = {
     'api_url': 'https://api.mmg.lat/v1/chat/completions',
     'api_key': '',
-    'model': 'grok',
+    # 双下拉：模型类别 + 模型细项
+    'model_category': 'grok',
+    'model_name': 'grok-video-6s',
     'aspect_ratio': '16:9',
     'duration': '6',
+    'resolution': '720p',
     'timeout': 300,
     'generation_mode': '文生视频',
     'retry_count': 3,
@@ -47,7 +50,7 @@ _default_params = {
     # Jimeng(OpenAI兼容) - 走 NewAPI 域名（固定日本节点）
     'jimeng_base_url': 'https://api.mmg.lat',
     'jimeng_video_model': 'jimeng-video-3.5-pro',
-    'jimeng_poll_interval': 2,
+    'jimeng_poll_interval': 10,
 }
 
 JIMENG_VIDEO_MODELS_JP = [
@@ -61,6 +64,12 @@ JIMENG_VIDEO_MODELS_JP = [
     'jimeng-video-3.0-fast',
     'jimeng-video-2.0-pro',
     'jimeng-video-2.0',
+]
+
+GROK_VIDEO_MODELS = [
+    'grok-video-6s',
+    'grok-video-10s',
+    'grok-video-15s',
 ]
 
 # 全局参数存储
@@ -110,23 +119,36 @@ class PluginUI:
         api_key_layout.addWidget(self.widgets['api_key'])
         layout.addLayout(api_key_layout)
         
-        # 模型选择
+        # 模型类别
+        cat_layout = QHBoxLayout()
+        cat_label = QLabel("模型类别:")
+        cat_label.setFixedWidth(100)
+        cat_label.setFont(QFont("Microsoft YaHei", 9))
+        cat_label.setStyleSheet("color: #CCCCCC;")
+
+        self.widgets['model_category'] = NoWheelComboBox()
+        self.widgets['model_category'].addItems(['grok', 'jimeng'])
+        self.widgets['model_category'].setCurrentText(_global_params.get('model_category', 'grok'))
+        self.widgets['model_category'].setFont(QFont("Microsoft YaHei", 9))
+        self.widgets['model_category'].setFixedHeight(32)
+
+        cat_layout.addWidget(cat_label)
+        cat_layout.addWidget(self.widgets['model_category'])
+        layout.addLayout(cat_layout)
+
+        # 模型选择（细项）
         model_layout = QHBoxLayout()
-        model_label = QLabel("模型:")
+        model_label = QLabel("模型选择:")
         model_label.setFixedWidth(100)
         model_label.setFont(QFont("Microsoft YaHei", 9))
         model_label.setStyleSheet("color: #CCCCCC;")
         
-        self.widgets['model'] = NoWheelComboBox()
-        self.widgets['model'].addItem("grok", "grok")
-        self.widgets['model'].addItem("jimeng", "jimeng")
-        self.widgets['model'].setCurrentText(_global_params.get('model', 'grok'))
-        self.widgets['model'].setFont(QFont("Microsoft YaHei", 9))
-        self.widgets['model'].setFixedHeight(32)
-        self.widgets['model'].currentTextChanged.connect(lambda text: self._update_param('model', text))
+        self.widgets['model_name'] = NoWheelComboBox()
+        self.widgets['model_name'].setFont(QFont("Microsoft YaHei", 9))
+        self.widgets['model_name'].setFixedHeight(32)
         
         model_layout.addWidget(model_label)
-        model_layout.addWidget(self.widgets['model'])
+        model_layout.addWidget(self.widgets['model_name'])
         layout.addLayout(model_layout)
         
         # 宽高比选择
@@ -147,7 +169,7 @@ class PluginUI:
         aspect_ratio_layout.addWidget(self.widgets['aspect_ratio'])
         layout.addLayout(aspect_ratio_layout)
         
-        # 视频时长选择
+        # 视频时长选择（Grok：由模型细项决定；Jimeng：根据模型限制动态校验）
         duration_layout = QHBoxLayout()
         duration_label = QLabel("视频时长(秒):")
         duration_label.setFixedWidth(100)
@@ -165,23 +187,23 @@ class PluginUI:
         duration_layout.addWidget(self.widgets['duration'])
         layout.addLayout(duration_layout)
 
-        # Jimeng 视频模型（仅在选择 jimeng 时生效）
-        jm_model_layout = QHBoxLayout()
-        jm_model_label = QLabel("即梦模型:")
-        jm_model_label.setFixedWidth(100)
-        jm_model_label.setFont(QFont("Microsoft YaHei", 9))
-        jm_model_label.setStyleSheet("color: #CCCCCC;")
+        # 分辨率（仅 Jimeng 3.0 / 3.0-fast 支持 1080p）
+        self.res_layout = QHBoxLayout()
+        res_label = QLabel("分辨率:")
+        res_label.setFixedWidth(100)
+        res_label.setFont(QFont("Microsoft YaHei", 9))
+        res_label.setStyleSheet("color: #CCCCCC;")
 
-        self.widgets['jimeng_video_model'] = NoWheelComboBox()
-        self.widgets['jimeng_video_model'].addItems(JIMENG_VIDEO_MODELS_JP)
-        self.widgets['jimeng_video_model'].setCurrentText(_global_params.get('jimeng_video_model', 'jimeng-video-3.5-pro'))
-        self.widgets['jimeng_video_model'].setFont(QFont("Microsoft YaHei", 9))
-        self.widgets['jimeng_video_model'].setFixedHeight(32)
-        self.widgets['jimeng_video_model'].currentTextChanged.connect(lambda text: self._update_param('jimeng_video_model', text))
+        self.widgets['resolution'] = NoWheelComboBox()
+        self.widgets['resolution'].addItems(['720p', '1080p'])
+        self.widgets['resolution'].setCurrentText(_global_params.get('resolution', '720p'))
+        self.widgets['resolution'].setFont(QFont("Microsoft YaHei", 9))
+        self.widgets['resolution'].setFixedHeight(32)
+        self.widgets['resolution'].currentTextChanged.connect(lambda text: self._update_param('resolution', text))
 
-        jm_model_layout.addWidget(jm_model_label)
-        jm_model_layout.addWidget(self.widgets['jimeng_video_model'])
-        layout.addLayout(jm_model_layout)
+        self.res_layout.addWidget(res_label)
+        self.res_layout.addWidget(self.widgets['resolution'])
+        layout.addLayout(self.res_layout)
         
         # 生成模式选择
         mode_layout = QHBoxLayout()
@@ -218,8 +240,91 @@ class PluginUI:
         timeout_layout.addWidget(self.widgets['timeout'])
         layout.addLayout(timeout_layout)
         
+        # 联动：类别 -> 细项列表 + 参数显隐
+        self.widgets['model_category'].currentTextChanged.connect(self._on_category_changed)
+        self.widgets['model_name'].currentTextChanged.connect(self._on_model_name_changed)
+        self._on_category_changed(self.widgets['model_category'].currentText())
+
         layout.addStretch()
         return container
+
+    def _set_model_name_items(self, category: str):
+        self.widgets['model_name'].blockSignals(True)
+        self.widgets['model_name'].clear()
+        items = GROK_VIDEO_MODELS if category == 'grok' else JIMENG_VIDEO_MODELS_JP
+        self.widgets['model_name'].addItems(items)
+        saved = _global_params.get('model_name')
+        if isinstance(saved, str) and saved in items:
+            self.widgets['model_name'].setCurrentText(saved)
+        else:
+            self.widgets['model_name'].setCurrentText(items[0] if items else '')
+        self.widgets['model_name'].blockSignals(False)
+        self._update_param('model_name', self.widgets['model_name'].currentText())
+
+    def _on_category_changed(self, category: str):
+        self._update_param('model_category', category)
+        self._set_model_name_items(category)
+
+        # Grok/Jimeng 参数联动
+        if category == 'jimeng':
+            self.widgets['generation_mode'].blockSignals(True)
+            self.widgets['generation_mode'].clear()
+            self.widgets['generation_mode'].addItems(['文生视频', '首帧生视频', '首尾帧生视频'])
+            self.widgets['generation_mode'].setCurrentText(str(_global_params.get('generation_mode', '文生视频')))
+            self.widgets['generation_mode'].blockSignals(False)
+            self._update_param('generation_mode', self.widgets['generation_mode'].currentText())
+
+            # Jimeng 时长选项保持（服务端会按模型兜底），这里给常用值
+            self.widgets['duration'].blockSignals(True)
+            self.widgets['duration'].clear()
+            self.widgets['duration'].addItems(['4', '5', '8', '10', '12', '15'])
+            self.widgets['duration'].setCurrentText(str(_global_params.get('duration', '5')))
+            self.widgets['duration'].blockSignals(False)
+        else:
+            self.widgets['generation_mode'].blockSignals(True)
+            self.widgets['generation_mode'].clear()
+            self.widgets['generation_mode'].addItems(['文生视频', '首帧生视频'])
+            self.widgets['generation_mode'].setCurrentText(str(_global_params.get('generation_mode', '文生视频')))
+            self.widgets['generation_mode'].blockSignals(False)
+
+            # Grok：时长由模型细项决定，避免出现三处不一致
+            self.widgets['duration'].blockSignals(True)
+            self.widgets['duration'].clear()
+            self.widgets['duration'].addItems(['6', '10', '15'])
+            # 尝试从模型名同步时长
+            mn = self.widgets['model_name'].currentText()
+            dur = '6'
+            if mn.endswith('10s'): dur = '10'
+            elif mn.endswith('15s'): dur = '15'
+            self.widgets['duration'].setCurrentText(dur)
+            self.widgets['duration'].blockSignals(False)
+            self._update_param('duration', dur)
+
+        # 分类切换后也刷新分辨率显隐
+        self._apply_resolution_visibility()
+
+    def _on_model_name_changed(self, text: str):
+        self._update_param('model_name', text)
+        self._apply_resolution_visibility()
+
+    def _apply_resolution_visibility(self):
+        category = self.widgets.get('model_category').currentText() if 'model_category' in self.widgets else _global_params.get('model_category', 'grok')
+        model_name = self.widgets.get('model_name').currentText() if 'model_name' in self.widgets else _global_params.get('model_name', '')
+
+        show = False
+        if category == 'jimeng':
+            m = str(model_name or '').lower()
+            show = ('jimeng-video-3.0' in m) or ('jimeng-video-3.0-fast' in m)
+
+        if show:
+            self.widgets['resolution'].show()
+            # label 是 layout 里第一个 widget
+            self.res_layout.itemAt(0).widget().show()
+        else:
+            self.widgets['resolution'].setCurrentText('720p')
+            self._update_param('resolution', '720p')
+            self.widgets['resolution'].hide()
+            self.res_layout.itemAt(0).widget().hide()
     
     def _update_param(self, key, value):
         global _global_params
@@ -263,12 +368,13 @@ def _force_sync_params_from_ui():
     updated = False
     
     param_map = {
-        'model': 'combo',
+        'model_category': 'combo',
+        'model_name': 'combo',
         'api_key': 'text',
         'aspect_ratio': 'combo',
         'duration': 'combo',
         'generation_mode': 'combo',
-        'jimeng_video_model': 'combo',
+        'resolution': 'combo',
         'timeout': 'spin',
     }
 
@@ -303,15 +409,18 @@ def encode_image_to_base64(image_path):
 # Jimeng(OpenAI兼容) - async 任务轮询
 # ==========================================
 
-def _jm_headers(api_key: str):
-    return {
-        "Content-Type": "application/json",
+def _jm_headers(api_key: str, is_multipart: bool = False):
+    h = {
         "Authorization": f"Bearer {api_key}",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         # 固定日本节点（依赖你的 NewAPI/反代放行这些头）
         "X-Token-Node": "jp",
         "X-From-NewAPI": "1",
     }
+    # multipart 时不要手动写 Content-Type，让 requests 自动加 boundary
+    if not is_multipart:
+        h["Content-Type"] = "application/json"
+    return h
 
 
 def _poll_task_result(base_url: str, api_key: str, task_id: str, timeout: int, poll_interval: int = 2, progress_callback=None):
@@ -390,7 +499,19 @@ def _normalize_jimeng_resolution(model: str, resolution: str) -> str:
     return '720p'
 
 
-def send_jimeng_video_request(base_url: str, api_key: str, model: str, prompt: str, ratio: str, duration: int, resolution: str, timeout: int, progress_callback=None):
+def send_jimeng_video_request(
+    base_url: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    ratio: str,
+    duration: int,
+    resolution: str,
+    timeout: int,
+    progress_callback=None,
+    first_frame_path: str = None,
+    last_frame_path: str = None,
+):
     url = f"{base_url.rstrip('/')}/v1/videos/generations"
     final_duration = _normalize_jimeng_duration(model, int(duration))
     final_resolution = _normalize_jimeng_resolution(model, resolution)
@@ -403,7 +524,27 @@ def send_jimeng_video_request(base_url: str, api_key: str, model: str, prompt: s
         "response_format": "url",
         "async": True,
     }
-    resp = requests.post(url, json=payload, headers=_jm_headers(api_key), timeout=timeout)
+
+    files = None
+    if first_frame_path and os.path.exists(first_frame_path):
+        files = files or {}
+        files["image_file_1"] = (os.path.basename(first_frame_path), open(first_frame_path, "rb"), "image/png")
+    if last_frame_path and os.path.exists(last_frame_path):
+        files = files or {}
+        files["image_file_2"] = (os.path.basename(last_frame_path), open(last_frame_path, "rb"), "image/png")
+
+    try:
+        if files:
+            resp = requests.post(url, data=payload, files=files, headers=_jm_headers(api_key, is_multipart=True), timeout=timeout)
+        else:
+            resp = requests.post(url, json=payload, headers=_jm_headers(api_key), timeout=timeout)
+    finally:
+        if files:
+            for _, v in files.items():
+                try:
+                    v[1].close()
+                except Exception:
+                    pass
     if resp.status_code != 200:
         raise Exception(f"Jimeng 视频提交失败 {resp.status_code}: {resp.text[:200]}")
     j = resp.json()
@@ -416,7 +557,7 @@ def send_jimeng_video_request(base_url: str, api_key: str, model: str, prompt: s
         api_key=api_key,
         task_id=task_id,
         timeout=timeout,
-        poll_interval=int(_global_params.get("jimeng_poll_interval", 2)),
+        poll_interval=int(_global_params.get("jimeng_poll_interval", 10)),
         progress_callback=progress_callback,
     )
 
@@ -436,27 +577,28 @@ def generate(context):
     # 提取参数
     api_url = 'https://api.mmg.lat/v1/chat/completions'
     api_key = plugin_params.get('api_key', '')
-    provider = plugin_params.get('model', 'grok')
+    provider = plugin_params.get('model_category', 'grok')
+    model_name = plugin_params.get('model_name', _global_params.get('model_name', 'grok-video-6s'))
     aspect_ratio = plugin_params.get('aspect_ratio', '16:9')
     duration = str(plugin_params.get('duration', '6'))
+    resolution = plugin_params.get('resolution', '720p')
     generation_mode = plugin_params.get('generation_mode', '文生视频')
     timeout = plugin_params.get('timeout', 300)
     
     # 根据时长动态选择实际后端模型
-    actual_model = 'grok-video-6s'
-    if duration == '10':
-        actual_model = 'grok-video-10s'
-    elif duration == '15':
-        actual_model = 'grok-video-15s'
+    actual_model = model_name if provider == 'grok' else 'grok-video-6s'
 
-    # 获取图片路径
+    # 获取图片路径（首帧/尾帧）
     first_frame_path = None
-    if generation_mode == '首帧生视频':
+    last_frame_path = None
+    if generation_mode in ('首帧生视频', '首尾帧生视频'):
         first_frame_path = context.get('first_frame_path')
-        if not first_frame_path:
+        last_frame_path = context.get('last_frame_path')
+        if not first_frame_path or (generation_mode == '首尾帧生视频' and not last_frame_path):
             ref_imgs = context.get('reference_images', {})
             if isinstance(ref_imgs, dict):
-                first_frame_path = ref_imgs.get('首帧') or ref_imgs.get(0)
+                first_frame_path = first_frame_path or ref_imgs.get('首帧') or ref_imgs.get(0)
+                last_frame_path = last_frame_path or ref_imgs.get('尾帧') or ref_imgs.get(1)
     
     print(f"API地址: {api_url}")
     print(f"模式: {generation_mode}")
@@ -499,14 +641,14 @@ def generate(context):
     # Jimeng：走标准 OpenAI 路径 + async=true -> 轮询 /v1/tasks/{id}
     if provider == 'jimeng':
         base_url = plugin_params.get('jimeng_base_url', 'https://api.mmg.lat')
-        jm_model = plugin_params.get('jimeng_video_model', _global_params.get('jimeng_video_model', 'jimeng-video-3.5-pro'))
+        jm_model = model_name if isinstance(model_name, str) and model_name.startswith('jimeng-video-') else _global_params.get('jimeng_video_model', 'jimeng-video-3.5-pro')
         try:
             if progress_callback:
                 progress_callback("提交任务...", 1)
 
-            # 当前实现：仅支持文生视频（首帧模式先不走 multipart，避免 NewAPI 不透传 form-data）
-            if generation_mode == '首帧生视频' and first_frame_path:
-                print("⚠️ Jimeng 模式暂不支持首帧上传（需要 multipart 透传），将按文生视频处理。")
+            if generation_mode in ('首帧生视频', '首尾帧生视频'):
+                if not first_frame_path or (generation_mode == '首尾帧生视频' and not last_frame_path):
+                    raise Exception("Jimeng 图生视频需要提供首帧（以及可选尾帧）图片路径")
 
             duration_int = 6
             try:
@@ -521,9 +663,11 @@ def generate(context):
                 prompt=prompt,
                 ratio=aspect_ratio,
                 duration=duration_int,
-                resolution='720p',
+                resolution=resolution,
                 timeout=timeout,
                 progress_callback=progress_callback,
+                first_frame_path=first_frame_path if generation_mode in ('首帧生视频', '首尾帧生视频') else None,
+                last_frame_path=last_frame_path if generation_mode == '首尾帧生视频' else None,
             )
             items = (result or {}).get("data") or []
             if not items:

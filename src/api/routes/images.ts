@@ -10,6 +10,7 @@ import { resolveTokenFromRequest, markTokenInvalid } from "@/lib/token-picker.ts
 import APIException from "@/lib/exceptions/APIException.ts";
 import EX from "@/api/consts/exceptions.ts";
 import { submitTask } from "@/lib/task-runner.ts";
+import logger from "@/lib/logger.ts";
 
 function isNoCreditsError(err: any): boolean {
   const msg = String(err?.errmsg || err?.message || '').toLowerCase();
@@ -35,6 +36,19 @@ function parseAsyncFlag(v: any): boolean {
   if (_.isString(v)) return v.trim().toLowerCase() === 'true' || v.trim() === '1';
   if (_.isFinite(v)) return Number(v) === 1;
   return false;
+}
+
+function maskToken(token: string): string {
+  const s = String(token || "");
+  if (s.length <= 10) return "***";
+  return `${s.slice(0, 3)}***${s.slice(-6)}`;
+}
+
+function shouldFallback4kTo2k(err: any, resolution: any): boolean {
+  const res = String(resolution || "").toLowerCase().trim();
+  if (res !== "4k") return false;
+  // 4k 权益不足时上游也会用 1006 返回；此时先降级 2k 尝试一次，避免误伤可用 token
+  return isNoCreditsError(err);
 }
 
 export default {
@@ -88,7 +102,7 @@ export default {
         const task = await submitTask({
           type: 'image',
           node,
-          ttlMs: 8 * 60 * 1000,
+          ttlMs: 30 * 60 * 1000,
           payload: { kind: 'generations', body: payload },
           run: async () => {
             const { generateImages } = await import('@/api/controllers/images.ts');
@@ -111,13 +125,27 @@ export default {
             let lastErr: any;
             for (let attempt = 0; attempt < 5; attempt++) {
               const picked = await resolveTokenFromRequest({ 'X-Token-Node': node });
+              logger.info(`[token-retry][image][async] attempt=${attempt + 1}/5 node=${node || '-'} token=${maskToken(picked.token)} source=${picked.source}`);
               try {
-                const imageUrls = await generateImages(
-                  finalModel,
-                  prompt,
-                  { ratio, resolution, sampleStrength, negativePrompt, intelligentRatio },
-                  picked.token
-                );
+                const genOnce = async (res: any) =>
+                  await generateImages(
+                    finalModel,
+                    prompt,
+                    { ratio, resolution: res, sampleStrength, negativePrompt, intelligentRatio },
+                    picked.token
+                  );
+
+                let imageUrls: string[];
+                try {
+                  imageUrls = await genOnce(resolution);
+                } catch (err: any) {
+                  if (shouldFallback4kTo2k(err, resolution)) {
+                    logger.warn(`[token-retry][image][async] fallback 4k->2k: token=${maskToken(picked.token)} reason=${String(err?.errmsg || err?.message || err)}`);
+                    imageUrls = await genOnce("2k");
+                  } else {
+                    throw err;
+                  }
+                }
                 let data: any[] = [];
                 if (responseFormat == "b64_json") {
                   data = (await Promise.all(imageUrls.map((url) => util.fetchFileBASE64(url)))).map((b64) => ({ b64_json: b64 }));
@@ -129,6 +157,7 @@ export default {
                 lastErr = err;
                 if (picked.source === 'pool') {
                   if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+                    logger.warn(`[token-retry][image][async] mark invalid: node=${node || '-'} token=${maskToken(picked.token)} reason=${String(err?.errmsg || err?.message || err)}`);
                     await markTokenInvalid(picked.token);
                     continue;
                   }
@@ -148,19 +177,27 @@ export default {
       let lastErr: any;
       for (let attempt = 0; attempt < 5; attempt++) {
         const { token, source } = await resolveTokenFromRequest(request.headers);
+        logger.info(`[token-retry][image] attempt=${attempt + 1}/5 node=${normalizeNode(request.headers?.['x-token-node'] || request.headers?.['X-Token-Node']) || '-'} token=${maskToken(token)} source=${source}`);
         try {
-          const imageUrls = await generateImages(
-            finalModel,
-            prompt,
-            {
-              ratio,
-              resolution,
-              sampleStrength,
-              negativePrompt,
-              intelligentRatio,
-            },
-            token
-          );
+          const genOnce = async (res: any) =>
+            await generateImages(
+              finalModel,
+              prompt,
+              { ratio, resolution: res, sampleStrength, negativePrompt, intelligentRatio },
+              token
+            );
+
+          let imageUrls: string[];
+          try {
+            imageUrls = await genOnce(resolution);
+          } catch (err: any) {
+            if (shouldFallback4kTo2k(err, resolution)) {
+              logger.warn(`[token-retry][image] fallback 4k->2k: token=${maskToken(token)} reason=${String(err?.errmsg || err?.message || err)}`);
+              imageUrls = await genOnce("2k");
+            } else {
+              throw err;
+            }
+          }
 
           let data: any[] = [];
           if (responseFormat == "b64_json") {
@@ -178,6 +215,7 @@ export default {
           lastErr = err;
           if (source === 'pool') {
             if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+              logger.warn(`[token-retry][image] mark invalid: token=${maskToken(token)} reason=${String(err?.errmsg || err?.message || err)}`);
               await markTokenInvalid(token);
               continue;
             }
@@ -205,7 +243,7 @@ export default {
       const task = await submitTask({
         type: 'image',
         node,
-        ttlMs: 8 * 60 * 1000,
+        ttlMs: 30 * 60 * 1000,
         payload: { kind: 'generations', headers: { 'x-token-node': node }, body: payload },
         run: async () => {
           // 复用当前同步逻辑：直接调用本路由的处理函数太绕，重用 controllers 更稳
@@ -467,7 +505,7 @@ export default {
       const task = await submitTask({
         type: 'image',
         node,
-        ttlMs: 8 * 60 * 1000,
+        ttlMs: 30 * 60 * 1000,
         payload: { kind: 'compositions', body: payload },
         run: async () => {
           const { generateImageComposition } = await import('@/api/controllers/images.ts');

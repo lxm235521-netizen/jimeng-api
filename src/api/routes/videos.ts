@@ -10,6 +10,7 @@ import { resolveTokenFromRequest, markTokenInvalid } from '@/lib/token-picker.ts
 import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
 import { submitTask } from '@/lib/task-runner.ts';
+import logger from '@/lib/logger.ts';
 
 function isNoCreditsError(err: any): boolean {
     const msg = String(err?.errmsg || err?.message || '').toLowerCase();
@@ -35,6 +36,12 @@ function parseAsyncFlag(v: any): boolean {
     if (_.isString(v)) return v.trim().toLowerCase() === 'true' || v.trim() === '1';
     if (_.isFinite(v)) return Number(v) === 1;
     return false;
+}
+
+function maskToken(token: string): string {
+    const s = String(token || '');
+    if (s.length <= 10) return '***';
+    return `${s.slice(0, 3)}***${s.slice(-6)}`;
 }
 
 export default {
@@ -84,7 +91,7 @@ export default {
                 const task = await submitTask({
                     type: 'video',
                     node,
-                    ttlMs: 8 * 60 * 1000,
+                    ttlMs: 30 * 60 * 1000,
                     payload: { kind: 'generations', body: payload },
                     run: async () => {
                         const {
@@ -283,6 +290,7 @@ export default {
             let lastErr: any;
             for (let attempt = 0; attempt < 5; attempt++) {
                 const { token, source } = await resolveTokenFromRequest(request.headers);
+                logger.info(`[token-retry][video] attempt=${attempt + 1}/5 node=${normalizeNode(request.headers?.['x-token-node'] || request.headers?.['X-Token-Node']) || '-'} token=${maskToken(token)} source=${source}`);
                 try {
                     const generatedVideoUrl = await generateVideo(
                         model,
@@ -321,6 +329,7 @@ export default {
                     lastErr = err;
                     if (source === 'pool') {
                         if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+                            logger.warn(`[token-retry][video] mark invalid: token=${maskToken(token)} reason=${String(err?.errmsg || err?.message || err)}`);
                             await markTokenInvalid(token);
                             continue;
                         }
@@ -363,7 +372,7 @@ export default {
             const task = await submitTask({
                 type: 'video',
                 node,
-                ttlMs: 8 * 60 * 1000,
+                ttlMs: 30 * 60 * 1000,
                 payload: { kind: 'generations', body: payload },
                 run: async () => {
                     const { generateVideo } = await import('@/api/controllers/videos.ts');

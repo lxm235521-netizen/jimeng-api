@@ -3,7 +3,7 @@ import logger from '@/lib/logger.ts';
 import { cleanupExpiredTasks } from '@/lib/task-store.ts';
 
 export function startTaskCleanupJob(options?: { schedule?: string }) {
-  // 每分钟清一次（任务 TTL=8 分钟）
+  // 每分钟清一次（任务 TTL 默认 30 分钟）
   const schedule = options?.schedule ?? '*/1 * * * *';
   cron.schedule(
     schedule,
