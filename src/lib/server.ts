@@ -11,7 +11,8 @@ import Exception from './exceptions/Exception.ts';
 import Request from './request/Request.ts';
 import Response from './response/Response.js';
 import FailureBody from './response/FailureBody.ts';
-import EX from './consts/exceptions.ts';
+import SYS_EX from './consts/exceptions.ts';
+import API_EX from '@/api/consts/exceptions.ts';
 import logger from './logger.ts';
 import config from './config.ts';
 import APIException from './exceptions/APIException.ts';
@@ -72,7 +73,7 @@ class Server {
             const authHeader = ctx.request.headers['authorization'] || ctx.request.headers['Authorization'];
             const auth = Array.isArray(authHeader) ? authHeader[0] : authHeader;
             if (!auth || typeof auth !== 'string' || !auth.toLowerCase().startsWith('bearer ')) {
-                throw new APIException(EX.API_REQUEST_FAILED, '未登录或登录已过期').setHTTPStatusCode(HTTP_STATUS_CODES.UNAUTHORIZED);
+                throw new APIException(API_EX.API_REQUEST_FAILED, '未登录或登录已过期').setHTTPStatusCode(HTTP_STATUS_CODES.UNAUTHORIZED);
             }
             const token = auth.slice(7).trim();
             try {
@@ -80,7 +81,7 @@ class Server {
                 ctx.state.admin = payload;
                 return next();
             } catch (e: any) {
-                throw new APIException(EX.API_REQUEST_FAILED, 'Token 无效或已过期').setHTTPStatusCode(HTTP_STATUS_CODES.UNAUTHORIZED);
+                throw new APIException(API_EX.API_REQUEST_FAILED, 'Token 无效或已过期').setHTTPStatusCode(HTTP_STATUS_CODES.UNAUTHORIZED);
             }
         });
 
