@@ -30,6 +30,21 @@ class Server {
         // 范围请求支持
         this.app.use(koaRange);
 
+        // 前置处理异常拦截（必须尽可能靠前注册）
+        // 否则像 /api/admin/* 鉴权这类中间件在抛错时会绕过拦截，导致返回 500 而不是预期的 401/业务错误码
+        this.app.use(async (ctx: any, next: Function) => {
+            if (ctx.request.type === "application/xml" || ctx.request.type === "application/ssml+xml") {
+                ctx.req.headers["content-type"] = "text/xml";
+            }
+            try {
+                await next();
+            } catch (err) {
+                logger.error(err);
+                const failureBody = new FailureBody(err);
+                new Response(failureBody).injectTo(ctx);
+            }
+        });
+
         // 静态资源：Web 管理后台（/admin）
         // - 前端构建产物放在 public/admin
         // - /admin 与 /admin/* 统一回退到 index.html（SPA）
@@ -85,17 +100,6 @@ class Server {
             }
         });
 
-        // 前置处理异常拦截
-        this.app.use(async (ctx: any, next: Function) => {
-            if(ctx.request.type === "application/xml" || ctx.request.type === "application/ssml+xml")
-                ctx.req.headers["content-type"] = "text/xml";
-            try { await next() }
-            catch (err) {
-                logger.error(err);
-                const failureBody = new FailureBody(err);
-                new Response(failureBody).injectTo(ctx);
-            }
-        });
         // 自定义 JSON 解析中间件
         this.app.use(async (ctx: any, next: Function) => {
             if (ctx.is('application/json') && ['POST', 'PUT', 'PATCH'].includes(ctx.method)) {
