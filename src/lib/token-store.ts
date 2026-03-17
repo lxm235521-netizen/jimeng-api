@@ -18,6 +18,12 @@ export interface TokenRecord {
   node: TokenNode;
   updated_at: string;
   created_at: string;
+  // 最近一次查询到的积分快照（可选）
+  credit_total?: number;
+  credit_gift?: number;
+  credit_purchase?: number;
+  credit_vip?: number;
+  credit_updated_at?: string;
 }
 
 interface TokenDBSchema {
@@ -184,6 +190,26 @@ export async function markTokenStatusByValue(tokenValue: string, status: TokenSt
     const rec = db.data!.tokens.find((t) => t.token_value === token_value);
     if (!rec) return false;
     rec.status = status;
+    rec.updated_at = new Date().toISOString();
+    await db.write();
+    return true;
+  });
+}
+
+export async function updateTokenCreditByValue(
+  tokenValue: string,
+  credit: { total: number; gift: number; purchase: number; vip: number }
+): Promise<boolean> {
+  return withLock(async () => {
+    const db = await getDB();
+    const token_value = normalizeTokenValue(tokenValue);
+    const rec = db.data!.tokens.find((t) => t.token_value === token_value);
+    if (!rec) return false;
+    rec.credit_total = Number(credit.total);
+    rec.credit_gift = Number(credit.gift);
+    rec.credit_purchase = Number(credit.purchase);
+    rec.credit_vip = Number(credit.vip);
+    rec.credit_updated_at = new Date().toISOString();
     rec.updated_at = new Date().toISOString();
     await db.write();
     return true;

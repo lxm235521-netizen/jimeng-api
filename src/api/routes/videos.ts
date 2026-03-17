@@ -1,4 +1,5 @@
 import _ from 'lodash';
+import fs from 'fs';
 
 import Request from '@/lib/request/Request.ts';
 import Response from '@/lib/response/Response.ts';
@@ -8,10 +9,18 @@ import util from '@/lib/util.ts';
 import { resolveTokenFromRequest, markTokenInvalid } from '@/lib/token-picker.ts';
 import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
+import { submitTask } from '@/lib/task-runner.ts';
 
 function isNoCreditsError(err: any): boolean {
     const msg = String(err?.errmsg || err?.message || '');
     return msg.includes('(错误码: 1006)') || msg.includes('错误码: 1006') || msg.includes('1006');
+}
+
+function normalizeNode(v: any): 'cn' | 'us' | 'jp' | 'hk' | 'sg' | undefined {
+    if (!_.isString(v)) return undefined;
+    const s = v.toLowerCase().trim();
+    if (['cn', 'us', 'jp', 'hk', 'sg'].includes(s)) return s as any;
+    return undefined;
 }
 
 export default {
@@ -212,6 +221,112 @@ export default {
                 }
             }
             throw lastErr;
+        },
+
+        '/generations/submit': async (request: Request) => {
+            const contentType = request.headers['content-type'] || '';
+            const isMultiPart = contentType.startsWith('multipart/form-data');
+
+            request
+                .validate('body.model', v => _.isUndefined(v) || _.isString(v))
+                .validate('body.prompt', _.isString)
+                .validate('body.ratio', v => _.isUndefined(v) || _.isString(v))
+                .validate('body.resolution', v => _.isUndefined(v) || _.isString(v))
+                .validate('body.functionMode', v => _.isUndefined(v) || (_.isString(v) && ['first_last_frames', 'omni_reference'].includes(v)))
+                .validate('body.response_format', v => _.isUndefined(v) || _.isString(v));
+
+            const node = normalizeNode(request.headers?.['x-token-node'] || request.headers?.['X-Token-Node']);
+
+            // 把首帧/尾帧图片在提交时转成 base64（避免后台任务依赖临时文件路径）
+            const filesPayload: { first_b64?: string; last_b64?: string } = {};
+            if (isMultiPart && request.files) {
+                const uploadedFiles = _.values(request.files);
+                if (uploadedFiles[0]) {
+                    const f: any = uploadedFiles[0];
+                    filesPayload.first_b64 = fs.readFileSync(f.filepath).toString('base64');
+                }
+                if (uploadedFiles[1]) {
+                    const f: any = uploadedFiles[1];
+                    filesPayload.last_b64 = fs.readFileSync(f.filepath).toString('base64');
+                }
+            }
+
+            const payload = { ...request.body, isMultiPart, filesPayload };
+            const task = await submitTask({
+                type: 'video',
+                node,
+                ttlMs: 8 * 60 * 1000,
+                payload: { kind: 'generations', body: payload },
+                run: async () => {
+                    const { generateVideo } = await import('@/api/controllers/videos.ts');
+                    const { resolveTokenFromRequest, markTokenInvalid } = await import('@/lib/token-picker.ts');
+
+                    const {
+                        model = DEFAULT_MODEL,
+                        prompt,
+                        ratio = "1:1",
+                        resolution = "720p",
+                        duration = 5,
+                        file_paths = [],
+                        filePaths = [],
+                        response_format = "url",
+                        functionMode = 'first_last_frames',
+                        isMultiPart,
+                        filesPayload,
+                    } = payload as any;
+
+                    const finalDuration = isMultiPart && typeof duration === 'string' ? parseInt(duration) : duration;
+                    const finalFilePaths = filePaths.length > 0 ? filePaths : file_paths;
+
+                    let lastErr: any;
+                    for (let attempt = 0; attempt < 5; attempt++) {
+                        const picked = await resolveTokenFromRequest({ 'X-Token-Node': node });
+                        try {
+                            // 为 first_last_frames 提供 files（仅首尾帧）
+                            const files: any = {};
+                            if (filesPayload?.first_b64) {
+                                files.first = { filepath: '', originalFilename: 'first.png', buffer: Buffer.from(filesPayload.first_b64, 'base64') };
+                            }
+                            if (filesPayload?.last_b64) {
+                                files.last = { filepath: '', originalFilename: 'last.png', buffer: Buffer.from(filesPayload.last_b64, 'base64') };
+                            }
+
+                            const url = await generateVideo(
+                                model,
+                                prompt,
+                                {
+                                    ratio,
+                                    resolution,
+                                    duration: finalDuration,
+                                    filePaths: finalFilePaths,
+                                    files,
+                                    httpRequest: { body: payload, files },
+                                    functionMode,
+                                },
+                                picked.token
+                            );
+
+                            if (response_format === 'b64_json') {
+                                const b64 = await util.fetchFileBASE64(url);
+                                return { created: util.unixTimestamp(), data: [{ b64_json: b64, revised_prompt: prompt }] };
+                            }
+                            return { created: util.unixTimestamp(), data: [{ url, revised_prompt: prompt }] };
+                        } catch (err: any) {
+                            lastErr = err;
+                            if (picked.source === 'pool') {
+                                if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+                                    await markTokenInvalid(picked.token);
+                                    continue;
+                                }
+                            }
+                            throw err;
+                        }
+                    }
+                    throw lastErr;
+                },
+            });
+
+            return { created: util.unixTimestamp(), task_id: task.id, status: 'processing' };
         }
 
     }

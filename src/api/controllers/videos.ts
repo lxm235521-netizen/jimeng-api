@@ -14,6 +14,7 @@ import { uploadImageBuffer, ImageUploadResult } from "@/lib/image-uploader.ts";
 import { uploadVideoBuffer, VideoUploadResult } from "@/lib/video-uploader.ts";
 import { extractVideoUrl, fetchHighQualityVideoUrl } from "@/lib/image-utils.ts";
 import { uploadVideoFromUrl } from "@/lib/video-uploader.ts";
+import { updateTokenCreditByValue } from "@/lib/token-store.ts";
 
 export const DEFAULT_MODEL = DEFAULT_VIDEO_MODEL;
 
@@ -62,7 +63,7 @@ function getVideoBenefitType(model: string): string {
 async function uploadImageFromFile(file: any, refreshToken: string, regionInfo: RegionInfo): Promise<ImageUploadResult> {
   try {
     logger.info(`开始从本地文件上传视频图片: ${file.originalFilename} (路径: ${file.filepath})`);
-    const imageBuffer = await fs.readFile(file.filepath);
+    const imageBuffer = Buffer.isBuffer(file?.buffer) ? file.buffer : await fs.readFile(file.filepath);
     return await uploadImageBuffer(imageBuffer, refreshToken, regionInfo);
   } catch (error: any) {
     logger.error(`从本地文件上传视频图片失败: ${error.message}`);
@@ -235,7 +236,14 @@ export async function generateVideo(
   logger.info(`使用模型: ${_model} 映射模型: ${model} 比例: ${ratio} 分辨率: ${supportsResolution ? resolution : '不支持'} 时长: ${actualDuration}s`);
 
   // 检查积分
-  const { totalCredit } = await getCredit(refreshToken);
+  const { totalCredit, giftCredit, purchaseCredit, vipCredit } = await getCredit(refreshToken);
+  // 记录到 Token 池（用于后台展示最近积分）
+  await updateTokenCreditByValue(refreshToken, {
+    total: totalCredit,
+    gift: giftCredit,
+    purchase: purchaseCredit,
+    vip: vipCredit,
+  });
   if (totalCredit <= 0) {
     logger.info("积分为 0，尝试收取今日积分...");
     try {

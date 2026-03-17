@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { apiFetch } from '../lib/api'
 import { VIDEO_MODELS_BY_NODE, type NodeKey } from '../lib/models-map'
 
@@ -26,6 +26,10 @@ const firstFrameFile = ref<File | null>(null)
 const lastFrameFile = ref<File | null>(null)
 
 const result = ref<GenResp | any | null>(null)
+const taskId = ref<string | null>(null)
+const taskStatus = ref<'processing' | 'succeeded' | 'failed' | null>(null)
+const taskError = ref<string>('')
+let pollTimer: any = null
 
 const ratios = ['1:1', '16:9', '9:16']
 const resolutions = ['720p', '1080p']
@@ -61,6 +65,9 @@ function ensureModelInNode() {
 async function generate() {
   error.value = ''
   result.value = null
+  taskId.value = null
+  taskStatus.value = null
+  taskError.value = ''
   if (!prompt.value.trim()) {
     error.value = '请输入 prompt'
     return
@@ -68,11 +75,44 @@ async function generate() {
 
   loading.value = true
   try {
+    async function pollTask(id: string) {
+      if (pollTimer) clearInterval(pollTimer)
+      taskStatus.value = 'processing'
+      pollTimer = setInterval(async () => {
+        try {
+          const t = await apiFetch<any>(`/v1/tasks/${id}`, { method: 'GET' })
+          if (t?.status === 'processing') {
+            taskStatus.value = 'processing'
+            return
+          }
+          if (t?.status === 'failed') {
+            taskStatus.value = 'failed'
+            taskError.value = t?.error?.message || '任务失败'
+            clearInterval(pollTimer)
+            pollTimer = null
+            return
+          }
+          if (t?.status === 'succeeded') {
+            taskStatus.value = 'succeeded'
+            result.value = t?.result
+            clearInterval(pollTimer)
+            pollTimer = null
+            return
+          }
+        } catch (e: any) {
+          taskStatus.value = 'failed'
+          taskError.value = e?.message || '查询任务失败'
+          clearInterval(pollTimer)
+          pollTimer = null
+        }
+      }, 2000)
+    }
+
     const hasFirst = !!firstFrameFile.value
     const hasLast = !!lastFrameFile.value
 
     if (!hasFirst && !hasLast) {
-      // 纯文本视频生成：JSON 请求
+      // 纯文本视频生成：异步 submit
       const body: any = {
         model: model.value,
         prompt: prompt.value,
@@ -83,14 +123,16 @@ async function generate() {
         functionMode: 'first_last_frames',
       }
 
-      const r = await apiFetch<GenResp>('/v1/videos/generations', {
+      const r = await apiFetch<any>('/v1/videos/generations/submit', {
         method: 'POST',
         headers: {
           'X-Token-Node': node.value,
         },
         body: JSON.stringify(body),
       })
-      result.value = r
+      taskId.value = r?.task_id || null
+      if (!taskId.value) throw new Error('未返回 task_id')
+      await pollTask(taskId.value)
       return
     }
 
@@ -111,14 +153,16 @@ async function generate() {
       fd.append('last_frame', lastFrameFile.value)
     }
 
-    const r = await apiFetch<GenResp>('/v1/videos/generations', {
+    const r = await apiFetch<any>('/v1/videos/generations/submit', {
       method: 'POST',
       headers: {
         'X-Token-Node': node.value,
       },
       body: fd,
     })
-    result.value = r
+    taskId.value = r?.task_id || null
+    if (!taskId.value) throw new Error('未返回 task_id')
+    await pollTask(taskId.value)
   } catch (e: any) {
     error.value = e?.message || '生成失败'
   } finally {
@@ -142,6 +186,11 @@ function onLastFrameChange(e: Event) {
   const file = (input?.files && input.files[0]) || null
   lastFrameFile.value = file
 }
+
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
+})
 </script>
 
 <template>
@@ -266,6 +315,12 @@ function onLastFrameChange(e: Event) {
             <summary>原始 JSON</summary>
             <pre class="mono">{{ JSON.stringify(result, null, 2) }}</pre>
           </details>
+        </div>
+
+        <div v-if="taskId" class="p" style="margin-top:8px;">
+          任务：<span class="mono">{{ taskId }}</span>
+          <span v-if="taskStatus" style="margin-left:8px;">状态：{{ taskStatus }}</span>
+          <span v-if="taskError" class="error" style="margin-top:8px; display:block;">{{ taskError }}</span>
         </div>
       </div>
     </div>

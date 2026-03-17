@@ -4,6 +4,7 @@ import ping from "./ping.ts";
 import token from './token.js';
 import models from './models.ts';
 import videos from './videos.ts';
+import tasks from './tasks.ts';
 import admin from './admin.ts';
 import adminMe from './admin-me.ts';
 import adminTokens from './admin-tokens.ts';
@@ -22,6 +23,7 @@ export default [
                         images: '/v1/images/generations',
                         compositions: '/v1/images/compositions',
                         videos: '/v1/videos/generations',
+                        tasks: '/v1/tasks/{task_id}',
                         models: '/v1/models',
                         health: '/ping',
                         admin_login: '/api/admin/login',
@@ -36,6 +38,7 @@ export default [
     token,
     models,
     videos,
+    tasks,
     admin,
     adminMe,
     adminTokens

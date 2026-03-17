@@ -9,6 +9,7 @@ import { SmartPoller, PollingStatus } from "@/lib/smart-poller.ts";
 import { DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_MODEL_US, IMAGE_MODEL_MAP, IMAGE_MODEL_MAP_US, IMAGE_MODEL_MAP_ASIA } from "@/api/consts/common.ts";
 import { uploadImageFromUrl, uploadImageBuffer } from "@/lib/image-uploader.ts";
 import { extractImageUrls } from "@/lib/image-utils.ts";
+import { updateTokenCreditByValue } from "@/lib/token-store.ts";
 import {
   resolveResolution,
   getBenefitCount,
@@ -348,6 +349,13 @@ async function generateImagesInternal(
 
   // 获取积分
   const { totalCredit, giftCredit, purchaseCredit, vipCredit } = await getCredit(refreshToken);
+  // 记录到 Token 池（用于后台展示最近积分）
+  await updateTokenCreditByValue(refreshToken, {
+    total: totalCredit,
+    gift: giftCredit,
+    purchase: purchaseCredit,
+    vip: vipCredit,
+  });
   if (totalCredit <= 0) {
     logger.info("积分为 0，尝试收取今日积分...");
     try {

@@ -7,6 +7,7 @@ import server from "@/lib/server.ts";
 import routes from "@/api/routes/index.ts";
 import logger from "@/lib/logger.ts";
 import { startTokenDailyResetJob, startTokenHealthcheckJob } from "@/lib/token-healthcheck.ts";
+import { startTaskCleanupJob } from "@/lib/task-cleanup.ts";
 
 const startupTime = performance.now();
 
@@ -33,6 +34,9 @@ const startupTime = performance.now();
 
   // Token 池状态重置：每天北京时间 00:00 把所有 token 置为可用
   startTokenDailyResetJob();
+
+  // 异步任务清理：任务默认保留 8 分钟
+  startTaskCleanupJob();
 
   await server.listen();
 

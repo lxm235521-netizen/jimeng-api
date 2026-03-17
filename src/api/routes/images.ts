@@ -9,10 +9,18 @@ import util from "@/lib/util.ts";
 import { resolveTokenFromRequest, markTokenInvalid } from "@/lib/token-picker.ts";
 import APIException from "@/lib/exceptions/APIException.ts";
 import EX from "@/api/consts/exceptions.ts";
+import { submitTask } from "@/lib/task-runner.ts";
 
 function isNoCreditsError(err: any): boolean {
   const msg = String(err?.errmsg || err?.message || '');
   return msg.includes('(错误码: 1006)') || msg.includes('错误码: 1006') || msg.includes('1006');
+}
+
+function normalizeNode(v: any): 'cn' | 'us' | 'jp' | 'hk' | 'sg' | undefined {
+  if (!_.isString(v)) return undefined;
+  const s = v.toLowerCase().trim();
+  if (['cn', 'us', 'jp', 'hk', 'sg'].includes(s)) return s as any;
+  return undefined;
 }
 
 export default {
@@ -101,6 +109,80 @@ export default {
       }
       throw lastErr;
 
+    },
+
+    "/generations/submit": async (request: Request) => {
+      request
+        .validate("body.model", (v) => _.isUndefined(v) || _.isString(v))
+        .validate("body.prompt", _.isString)
+        .validate("body.negative_prompt", (v) => _.isUndefined(v) || _.isString(v))
+        .validate("body.ratio", (v) => _.isUndefined(v) || _.isString(v))
+        .validate("body.resolution", (v) => _.isUndefined(v) || _.isString(v))
+        .validate("body.intelligent_ratio", (v) => _.isUndefined(v) || _.isBoolean(v))
+        .validate("body.sample_strength", (v) => _.isUndefined(v) || _.isFinite(v))
+        .validate("body.response_format", (v) => _.isUndefined(v) || _.isString(v));
+
+      const node = normalizeNode(request.headers?.['x-token-node'] || request.headers?.['X-Token-Node']);
+      const payload = { ...request.body };
+      const task = await submitTask({
+        type: 'image',
+        node,
+        ttlMs: 8 * 60 * 1000,
+        payload: { kind: 'generations', headers: { 'x-token-node': node }, body: payload },
+        run: async () => {
+          // 复用当前同步逻辑：直接调用本路由的处理函数太绕，重用 controllers 更稳
+          const { generateImages } = await import('@/api/controllers/images.ts');
+          const { resolveTokenFromRequest, markTokenInvalid } = await import('@/lib/token-picker.ts');
+          const { token, source } = await resolveTokenFromRequest({ 'X-Token-Node': node });
+
+          const {
+            model,
+            prompt,
+            negative_prompt: negativePrompt,
+            ratio,
+            resolution,
+            intelligent_ratio: intelligentRatio,
+            sample_strength: sampleStrength,
+            response_format,
+          } = payload as any;
+
+          const finalModel = _.defaultTo(model, DEFAULT_IMAGE_MODEL);
+          const responseFormat = _.defaultTo(response_format, "url");
+
+          let lastErr: any;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const picked = await resolveTokenFromRequest({ 'X-Token-Node': node });
+            try {
+              const imageUrls = await generateImages(
+                finalModel,
+                prompt,
+                { ratio, resolution, sampleStrength, negativePrompt, intelligentRatio },
+                picked.token
+              );
+
+              let data: any[] = [];
+              if (responseFormat == "b64_json") {
+                data = (await Promise.all(imageUrls.map((url) => util.fetchFileBASE64(url)))).map((b64) => ({ b64_json: b64 }));
+              } else {
+                data = imageUrls.map((url) => ({ url }));
+              }
+              return { created: util.unixTimestamp(), data };
+            } catch (err: any) {
+              lastErr = err;
+              if (picked.source === 'pool') {
+                if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+                  await markTokenInvalid(picked.token);
+                  continue;
+                }
+              }
+              throw err;
+            }
+          }
+          throw lastErr;
+        },
+      });
+
+      return { created: util.unixTimestamp(), task_id: task.id, status: 'processing' };
     },
 
     "/compositions": async (request: Request) => {
@@ -262,6 +344,117 @@ export default {
       }
       throw lastErr;
 
+    },
+
+    "/compositions/submit": async (request: Request) => {
+      const contentType = request.headers["content-type"] || "";
+      const isMultiPart = contentType.startsWith("multipart/form-data");
+
+      if (isMultiPart) {
+        request
+          .validate("body.model", (v) => _.isUndefined(v) || _.isString(v))
+          .validate("body.prompt", _.isString)
+          .validate("body.negative_prompt", (v) => _.isUndefined(v) || _.isString(v))
+          .validate("body.ratio", (v) => _.isUndefined(v) || _.isString(v))
+          .validate("body.resolution", (v) => _.isUndefined(v) || _.isString(v))
+          .validate("body.response_format", (v) => _.isUndefined(v) || _.isString(v));
+      } else {
+        request
+          .validate("body.model", (v) => _.isUndefined(v) || _.isString(v))
+          .validate("body.prompt", _.isString)
+          .validate("body.images", _.isArray)
+          .validate("body.negative_prompt", (v) => _.isUndefined(v) || _.isString(v))
+          .validate("body.ratio", (v) => _.isUndefined(v) || _.isString(v))
+          .validate("body.resolution", (v) => _.isUndefined(v) || _.isString(v))
+          .validate("body.response_format", (v) => _.isUndefined(v) || _.isString(v));
+      }
+
+      const node = normalizeNode(request.headers?.['x-token-node'] || request.headers?.['X-Token-Node']);
+
+      // 把输入图片在提交时转成 payload（避免后台任务依赖临时文件路径）
+      let imagesPayload: any;
+      if (isMultiPart) {
+        const files = request.files?.images;
+        if (!files) throw new Error("在form-data中缺少 'images' 字段");
+        const imageFiles = Array.isArray(files) ? files : [files];
+        imagesPayload = imageFiles.map((f) => ({
+          name: f.originalFilename,
+          b64: fs.readFileSync(f.filepath).toString('base64'),
+        }));
+      } else {
+        imagesPayload = (request.body.images || []).map((x: any) => (_.isString(x) ? x : x?.url)).filter(Boolean);
+      }
+
+      const payload = { ...request.body, imagesPayload, isMultiPart };
+      const task = await submitTask({
+        type: 'image',
+        node,
+        ttlMs: 8 * 60 * 1000,
+        payload: { kind: 'compositions', body: payload },
+        run: async () => {
+          const { generateImageComposition } = await import('@/api/controllers/images.ts');
+          const { resolveTokenFromRequest, markTokenInvalid } = await import('@/lib/token-picker.ts');
+
+          const {
+            model,
+            prompt,
+            negative_prompt: negativePrompt,
+            ratio,
+            resolution,
+            intelligent_ratio: intelligentRatio,
+            sample_strength: sampleStrength,
+            response_format,
+            imagesPayload,
+            isMultiPart,
+          } = payload as any;
+
+          const finalModel = _.defaultTo(model, DEFAULT_IMAGE_MODEL);
+          const responseFormat = _.defaultTo(response_format, "url");
+
+          const images: (string | Buffer)[] = isMultiPart
+            ? (imagesPayload as any[]).map((x) => Buffer.from(x.b64, 'base64'))
+            : (imagesPayload as string[]);
+
+          let lastErr: any;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const picked = await resolveTokenFromRequest({ 'X-Token-Node': node });
+            try {
+              const urls = await generateImageComposition(
+                finalModel,
+                prompt,
+                images,
+                {
+                  ratio,
+                  resolution,
+                  sampleStrength,
+                  negativePrompt,
+                  intelligentRatio,
+                },
+                picked.token
+              );
+              let data: any[] = [];
+              if (responseFormat == "b64_json") {
+                data = (await Promise.all(urls.map((url) => util.fetchFileBASE64(url)))).map((b64) => ({ b64_json: b64 }));
+              } else {
+                data = urls.map((url) => ({ url }));
+              }
+              return { created: util.unixTimestamp(), data };
+            } catch (err: any) {
+              lastErr = err;
+              if (picked.source === 'pool') {
+                if (isNoCreditsError(err) || (err instanceof APIException && err.compare(EX.API_TOKEN_EXPIRES))) {
+                  await markTokenInvalid(picked.token);
+                  continue;
+                }
+              }
+              throw err;
+            }
+          }
+          throw lastErr;
+        },
+      });
+
+      return { created: util.unixTimestamp(), task_id: task.id, status: 'processing' };
     },
   },
 };

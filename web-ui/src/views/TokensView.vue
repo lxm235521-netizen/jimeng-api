@@ -12,6 +12,11 @@ interface TokenRecord {
   node?: NodeKey
   created_at: string
   updated_at: string
+  credit_total?: number
+  credit_gift?: number
+  credit_purchase?: number
+  credit_vip?: number
+  credit_updated_at?: string
 }
 
 const loading = ref(false)
@@ -252,6 +257,8 @@ onMounted(() => {
           <div>Node</div>
           <div>Token</div>
           <div>状态</div>
+          <div>积分</div>
+          <div>积分更新时间</div>
           <div>Updated</div>
           <div>Created</div>
           <div></div>
@@ -269,6 +276,13 @@ onMounted(() => {
               <span class="dot" :class="t.status" :title="t.status === 'valid' ? '可用' : '无积分/不可用'"></span>
               <span class="tag" :class="t.status">{{ t.status === 'valid' ? '可用' : '无积分' }}</span>
             </div>
+            <div class="mono">
+              {{ typeof t.credit_total === 'number' ? t.credit_total : '-' }}
+              <span v-if="typeof t.credit_total === 'number'" style="opacity:.65;">
+                （赠{{ t.credit_gift ?? 0 }}/购{{ t.credit_purchase ?? 0 }}/VIP{{ t.credit_vip ?? 0 }}）
+              </span>
+            </div>
+            <div class="mono">{{ t.credit_updated_at || '-' }}</div>
             <div class="mono">{{ t.updated_at }}</div>
             <div class="mono">{{ t.created_at }}</div>
             <div class="ops">
@@ -365,7 +379,7 @@ onMounted(() => {
 
 .tr {
   display: grid;
-  grid-template-columns: 90px 60px 1fr 140px 220px 220px 90px;
+  grid-template-columns: 90px 60px 1fr 140px 180px 220px 220px 220px 90px;
   gap: 10px;
   padding: 10px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);

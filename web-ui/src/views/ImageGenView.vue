@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { apiFetch } from '../lib/api'
 import { IMAGE_MODELS_BY_NODE, type NodeKey } from '../lib/models-map'
 
@@ -31,6 +31,10 @@ const refImagesFiles = ref<File[]>([])
 const refImagesUrls = ref('')
 
 const result = ref<GenResp | any | null>(null)
+const taskId = ref<string | null>(null)
+const taskStatus = ref<'processing' | 'succeeded' | 'failed' | null>(null)
+const taskError = ref<string>('')
+let pollTimer: any = null
 
 const ratios = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9']
 const resolutions = computed(() => {
@@ -82,6 +86,9 @@ function ensureModelInNode() {
 async function generate() {
   error.value = ''
   result.value = null
+  taskId.value = null
+  taskStatus.value = null
+  taskError.value = ''
   if (!prompt.value.trim()) {
     error.value = '请输入 prompt'
     return
@@ -100,8 +107,41 @@ async function generate() {
       .filter(Boolean)
     const hasRefUrls = urlLines.length > 0
 
+    async function pollTask(id: string) {
+      if (pollTimer) clearInterval(pollTimer)
+      taskStatus.value = 'processing'
+      pollTimer = setInterval(async () => {
+        try {
+          const t = await apiFetch<any>(`/v1/tasks/${id}`, { method: 'GET' })
+          if (t?.status === 'processing') {
+            taskStatus.value = 'processing'
+            return
+          }
+          if (t?.status === 'failed') {
+            taskStatus.value = 'failed'
+            taskError.value = t?.error?.message || '任务失败'
+            clearInterval(pollTimer)
+            pollTimer = null
+            return
+          }
+          if (t?.status === 'succeeded') {
+            taskStatus.value = 'succeeded'
+            result.value = t?.result
+            clearInterval(pollTimer)
+            pollTimer = null
+            return
+          }
+        } catch (e: any) {
+          taskStatus.value = 'failed'
+          taskError.value = e?.message || '查询任务失败'
+          clearInterval(pollTimer)
+          pollTimer = null
+        }
+      }, 2000)
+    }
+
     if (!hasRefFiles && !hasRefUrls) {
-      // 纯文生图：走 /generations JSON 接口
+      // 纯文生图：走异步 submit
       const body: any = {
         model: model.value,
         prompt: prompt.value,
@@ -112,14 +152,16 @@ async function generate() {
       if (resolution.value) body.resolution = resolution.value
       if (intelligent_ratio.value) body.intelligent_ratio = true
 
-      const r = await apiFetch<GenResp>('/v1/images/generations', {
+      const r = await apiFetch<any>('/v1/images/generations/submit', {
         method: 'POST',
         headers: {
           'X-Token-Node': node.value,
         },
         body: JSON.stringify(body),
       })
-      result.value = r
+      taskId.value = r?.task_id || null
+      if (!taskId.value) throw new Error('未返回 task_id')
+      await pollTask(taskId.value)
       return
     }
 
@@ -140,14 +182,16 @@ async function generate() {
         fd.append('images', file)
       })
 
-      const r = await apiFetch<GenResp>('/v1/images/compositions', {
+      const r = await apiFetch<any>('/v1/images/compositions/submit', {
         method: 'POST',
         headers: {
           'X-Token-Node': node.value,
         },
         body: fd,
       })
-      result.value = r
+      taskId.value = r?.task_id || null
+      if (!taskId.value) throw new Error('未返回 task_id')
+      await pollTask(taskId.value)
       return
     }
 
@@ -163,14 +207,16 @@ async function generate() {
     if (resolution.value) body.resolution = resolution.value
     if (intelligent_ratio.value) body.intelligent_ratio = true
 
-    const r = await apiFetch<GenResp>('/v1/images/compositions', {
+    const r = await apiFetch<any>('/v1/images/compositions/submit', {
       method: 'POST',
       headers: {
         'X-Token-Node': node.value,
       },
       body: JSON.stringify(body),
     })
-    result.value = r
+    taskId.value = r?.task_id || null
+    if (!taskId.value) throw new Error('未返回 task_id')
+    await pollTask(taskId.value)
   } catch (e: any) {
     // 你遇到的：[登录失效]: check login error
     error.value = e?.message || '生成失败'
@@ -193,6 +239,11 @@ function onRefImagesChange(e: Event) {
 onMounted(() => {
   loadModelsHint()
   ensureModelInNode()
+})
+
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
 })
 
 watch(node, () => {
@@ -326,6 +377,12 @@ watch(node, () => {
             <summary>原始 JSON</summary>
             <pre class="mono">{{ JSON.stringify(result, null, 2) }}</pre>
           </details>
+        </div>
+
+        <div v-if="taskId" class="p" style="margin-top:8px;">
+          任务：<span class="mono">{{ taskId }}</span>
+          <span v-if="taskStatus" style="margin-left:8px;">状态：{{ taskStatus }}</span>
+          <span v-if="taskError" class="error" style="margin-top:8px; display:block;">{{ taskError }}</span>
         </div>
       </div>
     </div>
