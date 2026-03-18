@@ -26,10 +26,6 @@ const firstFrameFile = ref<File | null>(null)
 const lastFrameFile = ref<File | null>(null)
 
 const result = ref<GenResp | any | null>(null)
-const taskId = ref<string | null>(null)
-const taskStatus = ref<'processing' | 'succeeded' | 'failed' | null>(null)
-const taskError = ref<string>('')
-let pollTimer: any = null
 
 const ratios = ['1:1', '16:9', '9:16']
 const resolutions = ['720p', '1080p']
@@ -65,9 +61,6 @@ function ensureModelInNode() {
 async function generate() {
   error.value = ''
   result.value = null
-  taskId.value = null
-  taskStatus.value = null
-  taskError.value = ''
   if (!prompt.value.trim()) {
     error.value = '请输入 prompt'
     return
@@ -75,44 +68,11 @@ async function generate() {
 
   loading.value = true
   try {
-    async function pollTask(id: string) {
-      if (pollTimer) clearInterval(pollTimer)
-      taskStatus.value = 'processing'
-      pollTimer = setInterval(async () => {
-        try {
-          const t = await apiFetch<any>(`/v1/tasks/${id}`, { method: 'GET' })
-          if (t?.status === 'processing') {
-            taskStatus.value = 'processing'
-            return
-          }
-          if (t?.status === 'failed') {
-            taskStatus.value = 'failed'
-            taskError.value = t?.error?.message || '任务失败'
-            clearInterval(pollTimer)
-            pollTimer = null
-            return
-          }
-          if (t?.status === 'succeeded') {
-            taskStatus.value = 'succeeded'
-            result.value = t?.result
-            clearInterval(pollTimer)
-            pollTimer = null
-            return
-          }
-        } catch (e: any) {
-          taskStatus.value = 'failed'
-          taskError.value = e?.message || '查询任务失败'
-          clearInterval(pollTimer)
-          pollTimer = null
-        }
-      }, 2000)
-    }
-
     const hasFirst = !!firstFrameFile.value
     const hasLast = !!lastFrameFile.value
 
     if (!hasFirst && !hasLast) {
-      // 纯文本视频生成：异步 submit
+      // 纯文本视频生成：同步标准接口
       const body: any = {
         model: model.value,
         prompt: prompt.value,
@@ -123,20 +83,18 @@ async function generate() {
         functionMode: 'first_last_frames',
       }
 
-      const r = await apiFetch<any>('/v1/videos/generations/submit', {
+      const r = await apiFetch<any>('/v1/videos/generations', {
         method: 'POST',
         headers: {
           'X-Token-Node': node.value,
         },
         body: JSON.stringify(body),
       })
-      taskId.value = r?.task_id || null
-      if (!taskId.value) throw new Error('未返回 task_id')
-      await pollTask(taskId.value)
+      result.value = r
       return
     }
 
-    // 带首帧/尾帧图片的视频：multipart/form-data
+    // 带首帧/尾帧图片的视频：multipart/form-data（同步标准接口）
     const fd = new FormData()
     fd.append('model', model.value)
     fd.append('prompt', prompt.value)
@@ -147,22 +105,20 @@ async function generate() {
     fd.append('functionMode', 'first_last_frames')
 
     if (firstFrameFile.value) {
-      fd.append('first_frame', firstFrameFile.value)
+      fd.append('image_file_1', firstFrameFile.value)
     }
     if (lastFrameFile.value) {
-      fd.append('last_frame', lastFrameFile.value)
+      fd.append('image_file_2', lastFrameFile.value)
     }
 
-    const r = await apiFetch<any>('/v1/videos/generations/submit', {
+    const r = await apiFetch<any>('/v1/videos/generations', {
       method: 'POST',
       headers: {
         'X-Token-Node': node.value,
       },
       body: fd,
     })
-    taskId.value = r?.task_id || null
-    if (!taskId.value) throw new Error('未返回 task_id')
-    await pollTask(taskId.value)
+    result.value = r
   } catch (e: any) {
     error.value = e?.message || '生成失败'
   } finally {
@@ -188,8 +144,7 @@ function onLastFrameChange(e: Event) {
 }
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
-  pollTimer = null
+  // sync mode: no polling
 })
 </script>
 
@@ -317,11 +272,7 @@ onUnmounted(() => {
           </details>
         </div>
 
-        <div v-if="taskId" class="p" style="margin-top:8px;">
-          任务：<span class="mono">{{ taskId }}</span>
-          <span v-if="taskStatus" style="margin-left:8px;">状态：{{ taskStatus }}</span>
-          <span v-if="taskError" class="error" style="margin-top:8px; display:block;">{{ taskError }}</span>
-        </div>
+        <!-- 同步模式：无需显示 task_id -->
       </div>
     </div>
   </div>

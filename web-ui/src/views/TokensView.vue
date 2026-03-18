@@ -80,6 +80,24 @@ async function loadList() {
   }
 }
 
+async function refreshCreditsThenReload() {
+  loading.value = true
+  error.value = ''
+  try {
+    const body = filterNode.value !== 'all' ? { node: filterNode.value } : {}
+    const r = await apiFetch<{ ok: true; total: number; updated: number; failed: number }>('/api/admin/tokens/refresh-credits', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    checkResult.value = `积分刷新完成：updated=${r.updated}/${r.total}，failed=${r.failed}`
+    await loadList()
+  } catch (e: any) {
+    error.value = e?.message || '刷新积分失败'
+  } finally {
+    loading.value = false
+  }
+}
+
 function exportTokensTxt() {
   const lines = tokens.value.map((t) => t.token_value).filter(Boolean).join('\n')
   const blob = new Blob([lines + (lines ? '\n' : '')], { type: 'text/plain;charset=utf-8' })
@@ -239,7 +257,9 @@ onMounted(() => {
       </button>
       <button class="btn" @click="showImport = true">批量导入</button>
       <button class="btn ghost" @click="exportTokensTxt" :disabled="tokens.length === 0">导出 TXT</button>
-      <button class="btn ghost" @click="loadList" :disabled="loading">刷新</button>
+      <button class="btn ghost" @click="refreshCreditsThenReload" :disabled="loading">
+        {{ loading ? '刷新中…' : '刷新（更新积分）' }}
+      </button>
     </div>
 
     <div class="card">

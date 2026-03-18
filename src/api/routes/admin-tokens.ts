@@ -5,8 +5,13 @@ import SuccessfulBody from '@/lib/response/SuccessfulBody.ts';
 import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
 
-import { addToken, deleteToken, importTokens, listTokens, resetAllTokenStatus, resetTokenStatusByFilter } from '@/lib/token-store.ts';
+import { addToken, deleteToken, importTokens, listTokens, resetAllTokenStatus, resetTokenStatusByFilter, updateTokenCreditByValue } from '@/lib/token-store.ts';
 import { runTokenHealthcheckOnce } from '@/lib/token-healthcheck.ts';
+import { getCredit } from '@/api/controllers/core.ts';
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 export default {
   prefix: '/api/admin/tokens',
@@ -58,6 +63,35 @@ export default {
         changed = await resetAllTokenStatus('valid');
       }
       return new SuccessfulBody({ ok: true, changed });
+    },
+
+    '/refresh-credits': async (request: Request) => {
+      // 可选：body.node=cn|jp|us|hk|sg；不传则刷新全部（会较慢）
+      const node = request.body?.node;
+      const tokens = await listTokens({
+        node: _.isString(node) && node.trim() ? (node.trim() as any) : undefined,
+      });
+
+      let updated = 0;
+      let failed = 0;
+      for (const t of tokens) {
+        try {
+          const c = await getCredit(t.token_value);
+          await updateTokenCreditByValue(t.token_value, {
+            total: c.totalCredit,
+            gift: c.giftCredit,
+            purchase: c.purchaseCredit,
+            vip: c.vipCredit,
+          });
+          updated++;
+        } catch {
+          failed++;
+        }
+        // 轻微节流，避免压上游
+        await sleep(200);
+      }
+
+      return new SuccessfulBody({ ok: true, total: tokens.length, updated, failed });
     },
   },
 
