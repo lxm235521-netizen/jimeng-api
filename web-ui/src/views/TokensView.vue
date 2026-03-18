@@ -34,8 +34,8 @@ const adding = ref(false)
 const checking = ref(false)
 const checkResult = ref<string>('')
 
-const importNode = ref<NodeKey>('cn')
-const filterNode = ref<NodeKey | 'all'>('all')
+const importNode = ref<NodeKey>('jp')
+const filterNode = ref<NodeKey | 'all'>('jp')
 const filterStatus = ref<TokenStatus | 'all'>('all')
 
 const noCreditCount = computed(() => tokens.value.filter((t) => t.status === 'invalid').length)
@@ -170,6 +170,7 @@ async function doImport() {
     importResult.value = `导入完成：插入 ${r.inserted}，跳过 ${r.skipped}（行数 ${r.totalLines} / token数 ${r.totalTokens}）`
     importText.value = ''
     await loadList()
+    showImport.value = false
   } catch (e: any) {
     error.value = e?.message || '导入失败'
   } finally {

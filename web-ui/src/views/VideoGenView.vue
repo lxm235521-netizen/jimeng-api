@@ -13,7 +13,7 @@ interface GenResp {
 const loading = ref(false)
 const error = ref('')
 
-const node = ref<NodeKey>('cn')
+const node = ref<NodeKey>('jp')
 const model = ref('jimeng-video-3.0')
 const prompt = ref('')
 const ratio = ref('1:1')

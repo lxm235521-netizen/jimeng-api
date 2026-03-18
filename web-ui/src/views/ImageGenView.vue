@@ -13,7 +13,7 @@ interface GenResp {
 const loading = ref(false)
 const error = ref('')
 
-const node = ref<NodeKey>('cn')
+const node = ref<NodeKey>('jp')
 
 // 仅用于提示/兼容：仍然拉一次 /v1/models（失败不影响）
 const modelsLoading = ref(false)
