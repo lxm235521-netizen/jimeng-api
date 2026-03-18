@@ -85,11 +85,11 @@ async function refreshCreditsThenReload() {
   error.value = ''
   try {
     const body = filterNode.value !== 'all' ? { node: filterNode.value } : {}
-    const r = await apiFetch<{ ok: true; total: number; updated: number; failed: number }>('/api/admin/tokens/refresh-credits', {
+    const r = await apiFetch<{ ok: true; total: number; updated: number; received?: number; failed: number }>('/api/admin/tokens/refresh-credits', {
       method: 'POST',
       body: JSON.stringify(body),
     })
-    checkResult.value = `积分刷新完成：updated=${r.updated}/${r.total}，failed=${r.failed}`
+    checkResult.value = `积分刷新完成：updated=${r.updated}/${r.total}，received=${r.received ?? 0}，failed=${r.failed}`
     await loadList()
   } catch (e: any) {
     error.value = e?.message || '刷新积分失败'

@@ -7,7 +7,7 @@ import EX from '@/api/consts/exceptions.ts';
 
 import { addToken, deleteToken, importTokens, listTokens, resetAllTokenStatus, resetTokenStatusByFilter, updateTokenCreditByValue } from '@/lib/token-store.ts';
 import { runTokenHealthcheckOnce } from '@/lib/token-healthcheck.ts';
-import { getCredit } from '@/api/controllers/core.ts';
+import { getCredit, receiveCredit } from '@/api/controllers/core.ts';
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -73,10 +73,23 @@ export default {
       });
 
       let updated = 0;
+      let received = 0;
       let failed = 0;
       for (const t of tokens) {
         try {
-          const c = await getCredit(t.token_value);
+          let c = await getCredit(t.token_value);
+
+          // 如果积分为 0，尝试自动收取今日积分后再查一次
+          if (Number(c.totalCredit) <= 0) {
+            try {
+              const quota = await receiveCredit(t.token_value);
+              if (Number(quota) > 0) received++;
+              c = await getCredit(t.token_value);
+            } catch {
+              // ignore receive error, still write current snapshot
+            }
+          }
+
           await updateTokenCreditByValue(t.token_value, {
             total: c.totalCredit,
             gift: c.giftCredit,
@@ -91,7 +104,7 @@ export default {
         await sleep(200);
       }
 
-      return new SuccessfulBody({ ok: true, total: tokens.length, updated, failed });
+      return new SuccessfulBody({ ok: true, total: tokens.length, updated, received, failed });
     },
   },
 
